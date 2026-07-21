@@ -1,0 +1,93 @@
+project:
+  name: rbf-hardware
+  dataset: pen_digits
+
+paths:
+  # All relative paths are anchored at the workspace root. This project is
+  # expected to be copied as <workspace>/rbf-hardware.
+  workspace_root: ..
+  train_file: rbf-hardware/dataset/csv/train_out.csv
+  test_file: rbf-hardware/dataset/csv/test_out.csv
+  train_reference_file: rbf-hardware/dataset/csv/train_in.csv
+  test_reference_file: rbf-hardware/dataset/csv/test_in.csv
+  output_dir: output/rbf_hardware
+  log_file: app.log
+
+data:
+  delimiter: ","
+  encoding: utf-8-sig
+  has_header: false
+  input_features: 256
+  reference_input_features: 16
+  label_column: -1
+  class_labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  require_reference_label_match: true
+  reject_cross_split_duplicates: true
+  # train_in contains 10,553 rows, but only its first 3,000 rows currently have
+  # corresponding hardware outputs in train_out. test_in/test_out both have 439 rows.
+  allow_reference_prefix: true
+
+preprocessing:
+  # Ideal Gaussian activations are non-negative; measured negative values are
+  # tiny device noise around zero.
+  negative_policy: clamp_zero
+  # Fit only on train_out, then reuse the fitted scale for test_out.
+  scaling: train_global_max
+  epsilon: 1.0e-12
+
+classifier:
+  type: ridge_regression
+  input_features: 256
+  num_classes: 10
+  fit_intercept: true
+  regularize_intercept: false
+  # Original PC benchmark value; retained as the baseline candidate.
+  ridge_alpha: 0.001
+  prediction: argmax
+  alpha_selection:
+    enabled: true
+    strategy: stratified_kfold
+    folds: 5
+    metric: macro_f1
+    candidates: [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0]
+  score_calibration:
+    enabled: true
+    strategy: priority_class_bias_cv
+    priority_class: 8
+    minimum_priority_recall: 0.73
+    metric: macro_f1
+    bias_candidates: [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15]
+
+runtime:
+  device: auto
+  dtype: float32
+  random_state: 42
+  deterministic: true
+
+output:
+  run_prefix: pen_digits_hardware_fc
+  weights_filename: weights.pt
+  metrics_filename: metrics.json
+  predictions_filename: predictions.csv
+  confusion_matrix_csv: confusion_matrix.csv
+  confusion_matrix_text: confusion_matrix.txt
+  confusion_matrix_svg: confusion_matrix.svg
+  classification_report_filename: classification_report.txt
+  alpha_search_filename: alpha_search.csv
+  class_bias_search_filename: class_bias_search.csv
+  config_snapshot_filename: config.yaml
+
+logging:
+  level: INFO
+  file_mode: w
+
+diagnostics:
+  generalization_gap_warning: 0.10
+  class_recall_warning: 0.70
+
+evaluation:
+  # This file has been inspected during iterative development. Its metric is
+  # exact for the configured rows, but a new hardware-output file is required for a
+  # pristine blind-test claim.
+  test_set_status: observed_during_development
+  new_blind_test_required_for_final_claim: true
