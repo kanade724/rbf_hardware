@@ -6,8 +6,8 @@ paths:
   # All relative paths are anchored at the workspace root. This project is
   # expected to be copied as <workspace>/rbf-hardware.
   workspace_root: ..
-  train_file: rbf-hardware/dataset/csv/train_out.csv
-  test_file: rbf-hardware/dataset/csv/test_out.csv
+  train_file: rbf-hardware/dataset/csv/train_out_400.csv
+  test_file: rbf-hardware/dataset/csv/test_out_400.csv
   train_reference_file: rbf-hardware/dataset/csv/train_in.csv
   test_reference_file: rbf-hardware/dataset/csv/test_in.csv
   output_dir: output/rbf_hardware
@@ -28,12 +28,43 @@ data:
   allow_reference_prefix: true
 
 preprocessing:
+  # Used by the legacy direct-256-feature path. The enabled joint path keeps
+  # signed device currents and fits a train-only per-channel z-score instead.
   # Ideal Gaussian activations are non-negative; measured negative values are
   # tiny device noise around zero.
   negative_policy: clamp_zero
   # Fit only on train_out, then reuse the fitted scale for test_out.
   scaling: train_global_max
   epsilon: 1.0e-12
+
+feature_transform:
+  enabled: true
+  type: full_joint_gaussian
+  dimensions: 16
+  basis_per_dimension: 16
+  layout: dimension_major
+  output_features: 256
+  # Fixed values are used only when feature_transform.selection.enabled=false.
+  joint_sigma: 0.3
+  center_selection:
+    strategy: benchmark_kmeans
+    centers: 256
+    max_iter: 300
+  calibration:
+    strategy: train_channel_ridge
+    alpha: 0.1
+    epsilon: 1.0e-12
+  factor_clip:
+    lower: 1.0e-6
+    upper: 1.2
+  selection:
+    enabled: true
+    strategy: stratified_kfold
+    folds: 5
+    metric: macro_f1
+    joint_sigma_candidates: [0.25, 0.3, 0.35]
+    calibration_alpha_candidates: [0.01, 0.1, 1.0]
+    factor_upper_candidates: [1.0, 1.2]
 
 classifier:
   type: ridge_regression
@@ -49,9 +80,11 @@ classifier:
     strategy: stratified_kfold
     folds: 5
     metric: macro_f1
-    candidates: [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0]
+    candidates: [1.0e-8, 1.0e-6, 1.0e-4, 0.001, 0.01, 0.1]
   score_calibration:
-    enabled: true
+    # The joint representation already restores class-8 recall; no test- or
+    # class-specific adjustment is applied in the main comparison.
+    enabled: false
     strategy: priority_class_bias_cv
     priority_class: 8
     minimum_priority_recall: 0.73
@@ -64,8 +97,30 @@ runtime:
   random_state: 42
   deterministic: true
 
+inference:
+  # All files are append-only. Row N in each stage corresponds to row N in
+  # every other stage, which makes restart recovery deterministic.
+  # Runtime data stays outside the Git repository at SURF/runtime.
+  raw_samples_file: runtime/pen_digits_raw.csv
+  differential_features_file: runtime/pen_digits_differential.csv
+  hardware_features_file: runtime/pen_digits_hardware.csv
+  predictions_file: runtime/pen_digits_predictions.csv
+  report_file: runtime/pen_digits_inference_report.csv
+  differential_levels_file: rbf-hardware/dataset/csv/differential_levels.csv
+  gaussian_calibration_file: rbf-hardware/dataset/calibration/gaussian_fitting_parameters.csv
+  checkpoint_file: rbf-hardware/checkpoints/weights.pt
+  input_features: 16
+  basis_per_dimension: 16
+  quantization_levels: 256
+  raw_minimum: 0.0
+  raw_maximum: 100.0
+  sampling_mode: gaussian
+  random_seed: 42
+  poll_interval_seconds: 0.1
+  debounce_seconds: 0.25
+
 output:
-  run_prefix: pen_digits_hardware_fc
+  run_prefix: pen_digits_hardware_joint_gaussian
   weights_filename: weights.pt
   metrics_filename: metrics.json
   predictions_filename: predictions.csv
@@ -75,11 +130,13 @@ output:
   classification_report_filename: classification_report.txt
   alpha_search_filename: alpha_search.csv
   class_bias_search_filename: class_bias_search.csv
+  joint_search_filename: joint_gaussian_search.csv
   config_snapshot_filename: config.yaml
 
 logging:
   level: INFO
-  file_mode: w
+  # Training, collection, and inference share one append-only operational log.
+  file_mode: a
 
 diagnostics:
   generalization_gap_warning: 0.10

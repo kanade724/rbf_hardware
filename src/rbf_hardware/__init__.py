@@ -1,6 +1,6 @@
-"""Training package for the classifier after the hardware RBF feature layer."""
+"""Training and inference for the classifier after the hardware RBF layer."""
 
-from .training import TrainingResult, run_training
+from .modeling.predictor import JointGaussianPredictor
+from .training.pipeline import TrainingResult, run_training
 
-__all__ = ["TrainingResult", "run_training"]
-
+__all__ = ["JointGaussianPredictor", "TrainingResult", "run_training"]
