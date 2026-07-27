@@ -1,5 +1,9 @@
 # Hardware RBF Pen Digits System
 
+For installation, operation, troubleshooting, data contracts, and agent handoff,
+use the primary Chinese guide: [README_cn.md](README_cn.md). It is stored as
+UTF-8 with BOM for reliable display in Windows PowerShell, WPS, and common editors.
+
 The project has exactly three Python `main()` entry points:
 
 - `train_hardware_model.py` trains the 16×16 hardware Gaussian model.

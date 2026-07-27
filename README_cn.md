@@ -1,168 +1,654 @@
-# 硬件 RBF Pen Digits 系统
+﻿# RBF Hardware Pen Digits：中文使用与维护指南
 
-本项目包含三个且仅有三个带 `main()` 的运行入口：
+本项目用于完成 Pen Digits 手写数字的采集、模拟硬件响应、模型训练和在线识别。
 
-- `train_hardware_model.py`：训练 16×16 硬件 Gaussian 联合模型；
-- `collect_pen_digits.py`：通过鼠标轨迹采集 16 维 Pen Digits 原始数据；
-- `run_hardware_inference.py`：持续处理新增行、模拟硬件响应并完成识别。
+这份文档是项目的主要交接文档。第一次拿到仓库的开发者或 Agent，请先完整阅读“快速开始”“数据处理流程”“维护约束”三部分，再修改代码。
 
-其余 Python 文件均为高内聚的库模块，不包含命令行入口。
+## 1. 项目当前实现
 
-## 在线推理流程
+项目只有以下 3 个正式 Python 入口：
 
-```text
-绘图采集产生16维0～100数据
-→ 按train_in.csv/test_in.csv规则归一化到0～1
-→ 映射到differential_levels.csv中的256个离散等级
-→ 追加到16维差分中间表
-→ 从400次实测响应库选择同一个物理Cycle
-→ 按16个差分等级分别查出该Cycle的16组真实硬件响应
-→ 追加到256维模拟硬件表
-→ 将本次实验的“差分等级+对应16个硬件值”合并到独立17列表
-→ checkpoints/weights.pt完成联合Gaussian变换和分类
-→ 追加预测表与详细报告
-```
+| 入口 | 职责 |
+| --- | --- |
+| `collect_pen_digits.py` | 打开绘图界面，将每次保存的手写轨迹追加为一行 16 维原始数据 |
+| `run_hardware_inference.py` | 持续读取新行，完成差分量化、实测硬件响应模拟、实验表生成和数字识别 |
+| `train_hardware_model.py` | 使用真实硬件训练集重新训练模型并生成训练报告 |
 
-推理程序为单进程三阶段流水线。每个阶段根据下游已有行数，仅处理上游新增行；程序重启后不会重复写入已经完成的行。所有运行状态、共享文件路径、处理行号和预测结果都会追加到 `SURF/app.log`。
+`src/rbf_hardware/` 中的其他 Python 文件都是可复用模块，不应再增加 `main()`。
 
-## 数据约定
+当前推理使用真实器件的 400 次循环响应作为经验响应库：
 
-- `dataset/csv/train_in.csv` 和 `test_in.csv`：16 个 0～1 特征加标签，无表头；
-- `dataset/csv/differential_levels.csv`：表头加 256 个严格递增等级，不是 265 个；
-- `dataset/empirical/hardware_response_samples.npz`：256等级 × 400 Cycle × 16 Group的完整实测响应库；
-- `dataset/empirical/hardware_response_empirical_mapping.csv`：256等级 × 16 Group的可读统计映射表；
-- `dataset/empirical/hardware_response_metadata.json`：实测源文件哈希、维度和采样规则；
-- `dataset/empirical/hardware_response_validation.json`：与439条真实硬件测试数据的对照指标；
-- `dataset/calibration/gaussian_fitting_parameters.csv`：旧Gaussian拟合表，仅保留作历史参考，运行时不再加载；
-- `checkpoints/weights.pt`：`format_version=2`，输入 256 维模拟或真实硬件响应。
+- 不使用旧 `gaussian_fitting_parameters.csv` 生成模拟响应；
+- 每个手写数字随机选择一个真实物理 Cycle；
+- 该数字的全部 16 个差分维度共用同一个 Cycle，保留通道相关性和 Cycle 漂移；
+- 在实测响应上增加随信号幅值变化的随机噪声；
+- 小信号最多约 ±5%，大信号约 ±1%；
+- 每保存一个数字，单独创建一张硬件实验表，不与前一次实验累加。
 
-经验统计映射表每一行对应一个等级和一个Group，列为：
+注意：模型内部仍有“联合高斯特征变换”。它是分类器的特征处理方法，与旧的“使用高斯参数模拟器件响应”不是一回事。
+
+## 2. 推荐目录布局
+
+配置默认假定仓库位于某个工作区目录下：
 
 ```text
-level_index,differential_level,group_index,sample_count,mean,std_dev,
-minimum,q01,q05,q25,median,q75,q95,q99,maximum
+工作区/
+├── rbf-hardware/                    # Git 仓库
+│   ├── checkpoints/
+│   ├── dataset/
+│   ├── src/
+│   ├── tests/
+│   ├── collect_pen_digits.py
+│   ├── run_hardware_inference.py
+│   ├── train_hardware_model.py
+│   └── config.yaml
+├── runtime/                         # 自动生成，不进入 Git
+├── output/                          # 训练输出，不进入 Git
+├── app.log                          # 三个程序共用的运行日志
+├── agent.log                        # Agent 工作记录
+└── venv/                            # 推荐的 Python 虚拟环境
 ```
 
-`sampling_mode=empirical` 不拟合Gaussian，也不人工限制正负或宽度。每保存一个
-数字，程序从400次物理Cycle中随机选择一个Cycle；该数字的16个差分维度都使用
-同一个Cycle，再分别按等级查出完整16 Group响应。随后对每个响应增加独立乘性
-均匀噪声。每个Group以自身实测绝对幅值95分位作为大信号参考，噪声范围按绝对
-响应大小从小信号±5%线性下降到大信号±1%。这使输出不会逐值复制源数据，同时
-保留响应符号、实测形状、偏态、长尾、通道相关性和Cycle漂移。`mean` 模式不加
-随机噪声，使用400次Cycle逐等级均值，用于确定性验证。最终256维布局仍为
-dimension-major，与真实硬件和checkpoint一致。
+`config.yaml` 中的 `paths.workspace_root: ..` 表示所有相对路径都以 `rbf-hardware` 的父目录为基准。因此建议从工作区目录运行命令。
 
-## 目录结构
+仓库可以直接上传 GitHub。运行数据、日志和训练输出位于仓库外，不会污染版本历史。
 
-```text
-rbf-hardware/
-├── train_hardware_model.py
-├── collect_pen_digits.py
-├── run_hardware_inference.py
-├── config.yaml
-├── checkpoints/
-├── dataset/
-├── tests/
-└── src/rbf_hardware/
-    ├── configuration/     # 配置校验与路径解析
-    ├── data/              # 训练数据与追加式CSV存储
-    ├── inference/         # 量化、硬件模拟、流式调度
-    ├── infrastructure/    # 共享日志
-    ├── modeling/          # 联合Gaussian、岭分类器、checkpoint推理
-    ├── reporting/         # 指标与报告
-    ├── training/          # 训练、交叉验证与参数选择
-    ├── ui/                # Pen Digits绘图采集器
-    └── utilities/         # 无main函数的数据迁移工具
-```
+## 3. 环境要求
 
-## 运行
+- Windows 10 或 Windows 11；
+- Python 3.10 及以上版本，推荐 Python 3.12；
+- Tkinter，用于手写数字绘图界面，一般随 Windows Python 一起安装；
+- CPU 可以完成采集和推理，不强制要求 GPU；
+- 依赖见 `requirements.txt`。
 
-在 `SURF` 目录执行：
+从工作区目录创建环境：
 
 ```powershell
+py -3.12 -m venv venv
 .\venv\Scripts\Activate.ps1
-
-# 1. 启动绘图采集器
-python .\rbf-hardware\collect_pen_digits.py
-
-# 2. 另开终端启动持续推理
-python .\rbf-hardware\run_hardware_inference.py
-
-# 3. 需要时重新训练
-python .\rbf-hardware\train_hardware_model.py
+python -m pip install --upgrade pip
+python -m pip install -r .\rbf-hardware\requirements.txt
 ```
 
-只处理当前已有行并退出：
+检查 Tkinter：
+
+```powershell
+python -m tkinter
+```
+
+如果弹出一个测试窗口，说明绘图环境可用。
+
+## 4. 五分钟快速开始
+
+先进入包含 `rbf-hardware` 的工作区目录并激活虚拟环境：
+
+```powershell
+cd C:\path\to\workspace
+.\venv\Scripts\Activate.ps1
+```
+
+在终端 1 启动持续推理：
+
+```powershell
+python .\rbf-hardware\run_hardware_inference.py
+```
+
+在终端 2 启动绘图采集：
+
+```powershell
+python .\rbf-hardware\collect_pen_digits.py
+```
+
+在绘图窗口中写一个数字并保存。程序将：
+
+1. 在 `runtime/pen_digits_raw.csv` 追加一行；
+2. 生成 16 维差分等级；
+3. 生成 256 维模拟硬件响应；
+4. 为这一次保存创建一张独立实验表；
+5. 使用 `checkpoints/weights.pt` 识别数字；
+6. 将预测结果和处理报告追加到对应 CSV；
+7. 将运行状态追加到 `app.log`。
+
+持续推理窗口按 `q` 或 `Ctrl+C` 可以退出。
+
+实时查看日志：
+
+```powershell
+Get-Content .\app.log -Encoding UTF8 -Tail 100 -Wait
+```
+
+查看 Agent 工作记录：
+
+```powershell
+Get-Content .\agent.log -Encoding UTF8 -Tail 100 -Wait
+```
+
+## 5. 绘图采集
+
+绘图采集器会从鼠标轨迹中等距选择 8 个点，将每个点的 x、y 坐标组成 16 个数，并缩放到 0～100。
+
+常用操作：
+
+- 鼠标左键拖动画线；
+- 点击“保存”或按 `Enter`，保存当前数字；
+- 点击“清空”，清除当前画布；
+- 按 `Ctrl+Z`，撤销上一段轨迹。
+
+默认输出：
+
+```text
+工作区/runtime/pen_digits_raw.csv
+```
+
+指定其他输出文件：
+
+```powershell
+python .\rbf-hardware\collect_pen_digits.py `
+  --output C:\path\to\pen_digits_raw.csv
+```
+
+## 6. 完整数据处理流程
+
+```text
+绘图保存
+  ↓
+16 维原始坐标，范围 0～100
+  ↓ 按 train_in.csv / test_in.csv 的规则归一化
+16 维 0～1 数值
+  ↓ 就近量化到 differential_levels.csv 的 256 个等级
+16 维差分等级
+  ↓ 选择一个实测物理 Cycle，并查出每个等级的 16 组响应
+16 × 16 = 256 维模拟硬件响应
+  ↓
+生成本次数字独有的 17 列硬件实验表
+  ↓
+checkpoints/weights.pt
+  ↓
+预测数字、分类分数、处理报告
+```
+
+整个流程在一个推理进程内完成，不需要启动多个中间处理程序。
+
+### 6.1 追加式处理和断点恢复
+
+所有运行时主表都是追加式 CSV。第 N 行在各阶段代表同一个样本：
+
+```text
+raw 第 N 行
+↔ differential 第 N 行
+↔ hardware 第 N 行
+↔ predictions 第 N 行
+↔ report 第 N 行
+```
+
+推理程序通过比较上下游行数，只处理尚未完成的新行。因此正常重启不会重复处理已完成样本。
+
+不要只删除某一张下游表或只删除部分行，否则会破坏行号对应关系。需要清空实验时：
+
+1. 先关闭绘图和推理程序；
+2. 将整个 `runtime/` 归档，或成组清空全部运行时 CSV；
+3. 再重新启动程序。
+
+## 7. 实测硬件响应模拟
+
+### 7.1 响应库
+
+核心响应库：
+
+```text
+dataset/empirical/hardware_response_samples.npz
+```
+
+其逻辑形状为：
+
+```text
+256 个差分等级 × 400 个物理 Cycle × 16 个 Group
+```
+
+它来自硬件实测工作簿“400次循环归一化_新规则.xlsx”。仓库已经包含转换后的响应库，新用户运行推理时不需要原始 Excel 文件。
+
+配套文件：
+
+| 文件 | 用途 |
+| --- | --- |
+| `hardware_response_samples.npz` | 推理实际加载的完整实测响应 |
+| `hardware_response_empirical_mapping.csv` | 256×16 个等级/通道的统计信息，供人工检查 |
+| `hardware_response_metadata.json` | 原始文件哈希、维度和迁移信息 |
+| `hardware_response_validation.json` | 模拟响应与真实硬件测试数据的验证指标 |
+| `README.md` | 经验响应数据目录的补充说明 |
+
+旧文件 `dataset/calibration/gaussian_fitting_parameters.csv` 仅保留作历史参考，当前推理不会加载它。
+
+### 7.2 默认 empirical 模式
+
+每处理一个新数字，程序进行以下操作：
+
+1. 从 400 个真实 Cycle 中随机选一个；
+2. 16 个差分维度共用该 Cycle；
+3. 每个差分维度根据其等级，取出该 Cycle 的 16 个 Group 响应；
+4. 按 `dimension_major` 顺序展开为 256 维；
+5. 在每个实测值上加入独立的乘性均匀噪声。
+
+256 维布局如下：
+
+```text
+维度 1 的 Group 1～16,
+维度 2 的 Group 1～16,
+...
+维度 16 的 Group 1～16
+```
+
+这个顺序必须和真实硬件输出及 checkpoint 保持一致。
+
+### 7.3 噪声规则
+
+每个 Group 使用自身 400 次实测响应的绝对值第 95 百分位作为“大信号”参考：
+
+```text
+幅值比例 = clamp(|响应值| / Group绝对值q95, 0, 1)
+噪声比例 = 5% - 4% × 幅值比例
+输出值 = 实测响应 × uniform(1 - 噪声比例, 1 + 噪声比例)
+```
+
+因此：
+
+- 接近零的小信号最多约 ±5%；
+- 幅值越大，噪声比例越低；
+- 达到或超过大信号参考值时约 ±1%；
+- 噪声保留响应正负号；
+- 生成值不会逐项原样复制实测表。
+
+噪声上下限由 `config.yaml` 中以下字段控制：
+
+```yaml
+inference:
+  empirical_noise_minimum_rate: 0.01
+  empirical_noise_maximum_rate: 0.05
+```
+
+### 7.4 mean 验证模式
+
+`mean` 模式使用每个等级 400 次 Cycle 的均值，不增加随机噪声，适合确定性回归检查：
+
+```powershell
+python .\rbf-hardware\run_hardware_inference.py `
+  --once `
+  --sampling-mode mean
+```
+
+`mean` 模式只建议用于验证，不应代替默认的 `empirical` 实验数据生成。
+
+## 8. 每次实验生成的 17 列表
+
+每保存一个手写数字，程序立即在以下目录新建一张表：
+
+```text
+runtime/hardware_experiments/
+```
+
+文件名：
+
+```text
+pen_digits_hardware_experiment_YYYYMMDD_HHMMSS_ffffff.csv
+```
+
+程序启动本身不会创建实验表。只有发现并处理一行新的手写数字数据时才创建。
+
+表结构：
+
+| 列 | 内容 |
+| --- | --- |
+| `differential_level_index` | 差分等级在 `differential_levels.csv` 中的零基位置，严格为整数 0～255 |
+| `hardware_value_01`～`hardware_value_16` | 该等级对应的 16 个硬件响应之和 |
+
+聚合规则：
+
+1. 当前数字有 16 个差分等级和 16 个对应的 16 值硬件块；
+2. 如果当前数字内部有相同等级，将对应硬件块逐列相加；
+3. 按 `differential_level_index` 从小到大排序；
+4. 不同数字绝不写入或累计到同一张实验表；
+5. 一次补处理多行历史数据时，仍然为每一行分别新建一张表；
+6. 第一列写成 `0`、`1`、…、`255`，不会写成 `0.0` 等浮点形式。
+
+指定其他实验表目录：
+
+```powershell
+python .\rbf-hardware\run_hardware_inference.py `
+  --experiment-output-dir C:\path\to\hardware_experiments
+```
+
+## 9. 运行时文件说明
+
+默认路径都位于工作区的 `runtime/`：
+
+| 文件或目录 | 列数 | 内容 |
+| --- | ---: | --- |
+| `pen_digits_raw.csv` | 16 | 绘图生成的原始坐标 |
+| `pen_digits_differential.csv` | 16 | 量化后的差分值 |
+| `pen_digits_hardware.csv` | 256 | 模拟硬件响应 |
+| `hardware_experiments/` | 17 | 每个数字独立生成的聚合实验表 |
+| `pen_digits_predictions.csv` | 由报告模块定义 | 样本序号和预测数字 |
+| `pen_digits_inference_report.csv` | 由报告模块定义 | 时间、分数、分类边界及数据来源 |
+
+`pen_digits_hardware.csv` 是 checkpoint 的直接输入。模型不会绕过硬件模拟层直接使用 16 维原始输入。
+
+## 10. 推理命令
+
+持续监听新行：
+
+```powershell
+python .\rbf-hardware\run_hardware_inference.py
+```
+
+只处理当前已有的新行，然后退出：
 
 ```powershell
 python .\rbf-hardware\run_hardware_inference.py --once
 ```
 
-确定性模拟验证：
+常用覆盖参数：
 
-```powershell
-python .\rbf-hardware\run_hardware_inference.py --once --sampling-mode mean
+```text
+--config
+--sampling-mode empirical|mean
+--raw-input
+--differential-output
+--hardware-output
+--experiment-output-dir
+--predictions-output
+--report-output
+--checkpoint
+--response-bank
 ```
 
-实时查看程序日志：
+查看完整帮助：
 
 ```powershell
-Get-Content .\app.log -Tail 100 -Wait
+python .\rbf-hardware\run_hardware_inference.py --help
 ```
 
-不要在推理运行时使用 WPS 或 Excel 直接打开运行时 CSV；这类软件可能在 Windows
-上独占文件。持续推理模式检测到占用后会在 `app.log` 中记录中文告警并自动重试，
-关闭对应表格窗口后会从未完成阶段继续，不会重复处理已经写入的上游行。
+## 11. 训练模型
 
-查看代理实施记录：
+训练数据：
+
+- `dataset/csv/train_out_400.csv`：真实硬件训练输出；
+- `dataset/csv/test_out_400.csv`：真实硬件测试输出；
+- `dataset/csv/train_in.csv`、`test_in.csv`：对应的 16 维参考输入和标签。
+
+运行训练：
 
 ```powershell
-Get-Content .\agent.log -Tail 100 -Wait
+python .\rbf-hardware\train_hardware_model.py
 ```
 
-## 运行时共享文件
+训练结果默认写入：
 
-默认保存在仓库外部的 `SURF/runtime/`，因此 `rbf-hardware` 可以直接作为独立仓库上传 GitHub：
+```text
+工作区/output/rbf_hardware/<本次运行目录>/
+```
 
-- `pen_digits_raw.csv`：绘图产生的 16 维原始行；
-- `pen_digits_differential.csv`：16 维 0～1 差分等级行；
-- `pen_digits_hardware.csv`：256 维模拟硬件行；
-- `hardware_experiments/`：每保存一个手写数字时新建一张独立实验聚合表；
-- `pen_digits_predictions.csv`：样本序号和预测数字；
-- `pen_digits_inference_report.csv`：时间、得分、分类边界和完整来源路径。
+其中包括权重、指标、预测、混淆矩阵、参数搜索结果和配置快照。确认新模型验证结果后，再有意识地替换：
 
-这些文件构成同一条追加式数据链，不能单独删除中间文件中的部分行。需要重置时，应在停止推理程序后成组归档或清空全部运行时 CSV。
+```text
+rbf-hardware/checkpoints/weights.pt
+```
 
-每张实验表命名为
-`pen_digits_hardware_experiment_YYYYMMDD_HHMMSS_ffffff.csv`，共有 17
-列：第一列为整型 `differential_level_index`，后 16 列为
-`hardware_value_01`～`hardware_value_16`。每保存一个数字，就使用该数字唯一的
-一行差分数据和一行 256 维硬件数据立即创建一张新表。差分行第 N 个值与硬件行
-第 N 个连续 16 值块对应；仅在这一个数字的 16 个差分值内部，将相同差分等级的
-硬件块逐列求和并合并为一行，最终按差分等级从小到大排序。不同数字的数据绝不
-写入或累计到同一张实验表。程序一次补处理多条历史新增行时，也会为每条样本
-分别创建一张表。
+不要仅因为训练脚本运行成功就自动覆盖正式 checkpoint。
 
-`differential_level_index` 按该值在 `differential_levels.csv` 中的位置进行
-零基映射，严格输出整数 `0`～`255`：第一项为 `0`，最后一项为 `255`。CSV 中
-不会写成浮点数 `0.0` 或 `255.0`，可直接交给硬件组使用。
+## 12. 配置文件
 
-需要修改实验表目录时可使用：
+主配置为 `config.yaml`，主要分区：
+
+| 分区 | 说明 |
+| --- | --- |
+| `paths` | 工作区、训练数据、输出和日志路径 |
+| `data` | 数据列数、标签、编码和训练集约束 |
+| `feature_transform` | 模型内部联合高斯特征变换 |
+| `classifier` | Ridge 分类器及参数搜索 |
+| `runtime` | 设备、数据类型和随机种子 |
+| `inference` | 在线推理路径、经验响应、噪声和轮询间隔 |
+| `output` | 训练产物命名 |
+| `logging` | 日志级别和追加模式 |
+
+修改配置时优先修改路径或参数，不要把本机绝对路径写进仓库。
+
+## 13. 验证和测试
+
+从工作区目录运行全部测试：
 
 ```powershell
-python .\rbf-hardware\run_hardware_inference.py `
-  --experiment-output-dir C:\path\to\experiment_tables
+$env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTHONPATH = "$PWD\rbf-hardware\src"
+python -m unittest discover -s .\rbf-hardware\tests -v
 ```
 
-## 验证结果
+当前基准结果：
 
-当前 checkpoint 在真实 `test_out_400.csv` 上准确率为 93.62%。使用400 Cycle
-经验库均值映射439条数据时，准确率为93.85%，与真实硬件预测一致率99.32%，
-硬件向量相关系数0.99983。使用10个随机种子进行整Cycle经验重采样时，平均
-准确率93.53%（91.80%～94.08%），平均预测一致率98.38%，平均硬件相关系数
-0.99938。
+- 测试：15 项全部通过；
+- Python 文件：36 个可以解析；
+- 正式 `main()`：仅 3 个；
+- checkpoint 在真实 `test_out_400.csv` 上准确率约 93.62%；
+- 经验均值模拟准确率约 93.85%，与真实硬件预测一致率约 99.32%；
+- 加噪经验模拟的 10 个随机种子平均准确率约 93.53%；
+- 加噪经验模拟与真实硬件的平均预测一致率约 98.38%。
 
-经验模拟以真实400次硬件响应为基底并加入1%～5%的幅值自适应随机扰动，不再
-依赖旧Gaussian参数或人为±20%截断，也不会逐值照抄源表。最终checkpoint只消费
-生成后的256维硬件表，不会绕过硬件层直接使用16维原始输入。连接在线真实硬件
-时，只需让设备按相同dimension-major顺序写入 `pen_digits_hardware.csv`。
+这些指标用于工程回归，不应被描述成全新盲测结论；当前测试集在开发过程中已经被检查过。
+
+## 14. 常见问题
+
+### 14.1 `PermissionError: [Errno 13] Permission denied`
+
+原因通常是 WPS、Excel 或 CSV 预览器在 Windows 上独占了运行时 CSV。
+
+处理方法：
+
+1. 关闭正在查看的 CSV；
+2. 保持持续推理程序运行，它会记录警告并自动重试；
+3. 如果使用 `--once`，关闭占用程序后重新执行命令。
+
+不要在持续推理时直接用 WPS 或 Excel 打开：
+
+```text
+pen_digits_raw.csv
+pen_digits_differential.csv
+pen_digits_hardware.csv
+pen_digits_predictions.csv
+pen_digits_inference_report.csv
+```
+
+需要观察内容时，优先复制文件后查看，或使用：
+
+```powershell
+Get-Content .\runtime\pen_digits_hardware.csv -Tail 2
+```
+
+### 14.2 保存数字后没有生成实验表
+
+检查：
+
+- 推理程序是否正在运行；
+- `app.log` 是否报告文件占用或列数错误；
+- 原始表是否确实增加了新行；
+- 下游表行数是否因手工删除而与上游失去对应。
+
+实验表在“处理新行”时创建，不是在程序启动时创建。
+
+### 14.3 输出重复或阶段行数不一致
+
+停止所有程序，将整个 `runtime/` 成组归档或清空后重试。不要只删除一张中间表。
+
+### 14.4 找不到模块
+
+确认已经安装 `requirements.txt`，并从工作区目录使用仓库顶层入口运行。正式入口会自动把 `src/` 加入 Python 模块路径。
+
+### 14.5 找不到响应库或 checkpoint
+
+确认以下文件存在：
+
+```text
+rbf-hardware/dataset/empirical/hardware_response_samples.npz
+rbf-hardware/checkpoints/weights.pt
+```
+
+并检查 `config.yaml` 中的 `workspace_root` 是否仍与目录布局匹配。
+
+### 14.6 中文日志或 README 乱码
+
+本项目面向 Windows 用户的中文 README 和日志使用 UTF-8 with BOM。读取时显式指定 UTF-8：
+
+```powershell
+Get-Content .\rbf-hardware\README_cn.md -Encoding UTF8
+Get-Content .\app.log -Encoding UTF8 -Tail 100 -Wait
+Get-Content .\agent.log -Encoding UTF8 -Tail 100 -Wait
+```
+
+文件前三个字节应为 UTF-8 BOM：
+
+```powershell
+Format-Hex .\rbf-hardware\README_cn.md | Select-Object -First 1
+```
+
+输出开头应包含：
+
+```text
+EF BB BF
+```
+
+## 15. 日志约定
+
+### 15.1 `app.log`
+
+三个正式程序共用 `工作区/app.log`，记录：
+
+- 程序启动和停止；
+- 共享文件路径；
+- 各阶段新增行数；
+- 响应模式、Cycle、噪声和预测结果；
+- 文件占用、格式错误和重试信息。
+
+日志必须追加写入，不应在程序启动时覆盖。
+
+### 15.2 `agent.log`
+
+Agent 在 `工作区/agent.log` 中用中文记录：
+
+- 当前开始做什么；
+- 修改了什么；
+- 检查或测试的结果；
+- 当前问题；
+- 下一步要做什么。
+
+示例：
+
+```text
+10:01 Developer:
+开始检查推理流水线
+
+10:03 Developer:
+完成经验响应模块修改
+
+10:04 Tester:
+开始运行单元测试
+
+10:06 Tester:
+15 项测试全部通过
+```
+
+任务较长时应提高记录频率，不要在同一条“处理中”记录上停留太久。日志记录结论和工程动作，不记录隐藏的逐字推理过程。
+
+## 16. 给接手 Agent 的维护约束
+
+接手任务时按以下顺序检查：
+
+1. 阅读本文件；
+2. 阅读 `config.yaml`；
+3. 执行 `Get-Content .\agent.log -Encoding UTF8 -Tail 100`；
+4. 执行 `Get-Content .\app.log -Encoding UTF8 -Tail 100`；
+5. 查看 `git status --short`，保留用户已有修改；
+6. 明确修改的是采集、推理、训练还是共享模块；
+7. 修改后运行相关测试和完整测试。
+
+必须保持以下不变量：
+
+- 正式 `main()` 始终只有采集、推理、训练 3 个；
+- 可复用代码放在 `src/rbf_hardware/` 的对应子包中；
+- 单一模块应职责明确，入口文件只做参数解析和组装；
+- 运行时文件继续位于仓库外的 `runtime/`；
+- CSV 各阶段第 N 行必须代表同一样本；
+- 256 维硬件响应必须保持 `dimension_major` 顺序；
+- 默认响应模拟加载实测经验库，不得悄悄恢复旧高斯映射；
+- 一个保存动作必须生成一张新的实验表；
+- 实验表第一列必须是 0～255 的整数；
+- 相同差分等级只在当前数字内部合并；
+- 中文用户文件和日志使用 UTF-8 with BOM；
+- `app.log` 和 `agent.log` 只能追加，不能覆盖；
+- 不得提交 `runtime/`、`output/`、日志、缓存或虚拟环境；
+- 修改实测响应源时，响应库、映射表、元数据和验证报告必须成组更新；
+- 不得在没有验证的情况下覆盖正式 checkpoint。
+
+建议提交前执行：
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTHONPATH = "$PWD\rbf-hardware\src"
+python -m unittest discover -s .\rbf-hardware\tests -v
+rg -n 'if __name__ == .__main__.' .\rbf-hardware --glob "*.py"
+git -C .\rbf-hardware status --short
+git -C .\rbf-hardware diff --check
+```
+
+测试文件自身可能包含 `unittest.main()`，统计“正式入口”时应排除 `tests/`。
+
+## 17. 代码目录职责
+
+```text
+src/rbf_hardware/
+├── configuration/      # 配置读取、校验和路径解析
+├── data/               # CSV 存储和训练数据集
+├── inference/          # 预处理、经验响应、实验聚合、流式流水线
+├── infrastructure/     # 日志等基础设施
+├── modeling/           # 联合高斯变换、Ridge 分类器、checkpoint 推理
+├── reporting/          # 指标和报告
+├── training/           # 训练、交叉验证和参数选择
+├── ui/                 # Pen Digits 绘图采集器
+└── utilities/          # 无 main 的一次性迁移和格式转换工具
+```
+
+新增功能时，将业务逻辑放入最相关的子包，入口文件只负责：
+
+1. 解析命令行参数；
+2. 加载配置；
+3. 解析路径；
+4. 组装服务；
+5. 启动流程并报告结果。
+
+这样可以保证高内聚、低耦合，也便于单元测试。
+
+## 18. 数据和编码约定
+
+- 运行时数值表使用逗号分隔；
+- 配置中的默认文本编码为 `utf-8-sig`；
+- 含中文且供 Windows 用户直接查看的 Markdown、CSV 和日志优先使用 UTF-8 with BOM；
+- JSON 和 Python 源文件使用标准 UTF-8，并由程序显式指定编码；
+- 不依赖系统默认编码；
+- CSV 列数和顺序属于数据契约，修改时必须同步更新验证和测试；
+- 差分等级共有 256 个，不是 265 个；
+- `differential_level_index` 是 0～255 的零基整数索引，不是原始浮点差分值。
+
+## 19. 当前状态摘要
+
+当前版本已经实现：
+
+- 16 维绘图数据追加采集；
+- 与训练参考输入一致的归一化和 256 等级差分量化；
+- 基于 400 Cycle 实测响应的 16×16 硬件模拟；
+- 小信号约 ±5%、大信号约 ±1% 的幅值自适应随机噪声；
+- 每个数字一张、17 列、等级合并并排序的硬件实验表；
+- checkpoint 自动推理、预测表和详细报告；
+- Windows 文件占用重试；
+- 仓库外运行目录；
+- 中文 UTF-8 日志；
+- 采集、推理、训练三个正式入口；
+- 自动化测试和工程回归检查。
+
+如需理解某一阶段的实现，请先从 `src/rbf_hardware/inference/pipeline.py` 查看流水线编排，再进入对应模块，不要从运行时 CSV 的偶然内容反推接口规则。
