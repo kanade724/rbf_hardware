@@ -108,14 +108,16 @@ inference:
   predictions_file: runtime/pen_digits_predictions.csv
   report_file: runtime/pen_digits_inference_report.csv
   differential_levels_file: rbf-hardware/dataset/csv/differential_levels.csv
-  gaussian_calibration_file: rbf-hardware/dataset/calibration/gaussian_fitting_parameters.csv
+  empirical_response_file: rbf-hardware/dataset/empirical/hardware_response_samples.npz
   checkpoint_file: rbf-hardware/checkpoints/weights.pt
   input_features: 16
   basis_per_dimension: 16
   quantization_levels: 256
   raw_minimum: 0.0
   raw_maximum: 100.0
-  sampling_mode: gaussian
+  sampling_mode: empirical
+  empirical_noise_minimum_rate: 0.01
+  empirical_noise_maximum_rate: 0.05
   random_seed: 42
   poll_interval_seconds: 0.1
   debounce_seconds: 0.25

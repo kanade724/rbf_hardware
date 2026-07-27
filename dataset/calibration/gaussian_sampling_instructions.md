@@ -1,5 +1,9 @@
 # 高斯采样说明
 
+> 历史说明：当前在线推理已切换到
+> `dataset/empirical/hardware_response_samples.npz` 的400 Cycle实测经验重采样，
+> 本文及Gaussian参数表不再被运行时加载，仅保留用于追溯旧方案。
+
 ## 数据来源
 
 `高斯拟合参数.xlsx` — 16 个 Sheet（Group_1 ~ Group_16），每个 Sheet 有 256 行（Sheet_Index 0-255），每行记录该位置 100 个数据点的高斯拟合参数：
@@ -93,3 +97,20 @@ print(vs)  # array([4.15e-06, 4.17e-06, ...])
 $$f(x) = A \cdot e^{-\frac{(x-\mu)^2}{2\sigma^2}}$$
 
 提取 μ 和 σ 后，调用 `np.random.normal(mu, sigma)` 即可生成符合该分布的随机值。
+
+## 硬件推理中的集中采样约束
+
+`A` 是拟合曲线在 `μ` 处的峰高，并不是 `0～1` 概率；将 Gaussian 归一化为
+概率分布后，A 会被约掉。原始 `σ` 描述采集数据的拟合宽度。为了满足当前硬件组
+要求，在线模拟额外采用以下集中约束：
+
+```text
+radius = abs(μ) × 20%
+relative_A = A / max(A)  # 同一输入维度的16个Group内归一化
+effective_sigma = min(σ, radius / (3 × (1 + relative_A)))
+value ~ TruncatedNormal(μ, effective_sigma, μ-radius, μ+radius)
+```
+
+相对 A 越高，分布越集中于中心。超出边界的随机值会重新采样，最终再做边界
+保护。因此每个 Group 的模拟值严格在其中心上下20%以内，同时避免简单裁剪导致
+大量数据堆积在边界。

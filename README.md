@@ -12,7 +12,8 @@ The inference process is a restart-safe, append-only pipeline:
 16 raw values (0..100)
 -> normalize and quantize to the 256 differential levels
 -> append a 16-value differential row
--> sample 16 groups per dimension from Gaussian calibration
+-> choose one measured physical cycle from the 400-cycle response bank
+-> look up all 16 Group responses for each quantized dimension
 -> append a dimension-major 256-value hardware row
 -> create this digit's sorted 17-column differential/hardware aggregate
 -> classify with checkpoints/weights.pt
@@ -40,9 +41,9 @@ Process currently available rows once:
 python .\rbf-hardware\run_hardware_inference.py --once
 ```
 
-Use `--sampling-mode mean` for deterministic calibration verification. The default `gaussian` mode samples `normal(mean, std_dev)` as described by the calibration instructions.
+Use `--sampling-mode mean` for deterministic verification. The default `empirical` mode draws one of 400 measured physical cycles per saved digit and uses that same cycle for all 16 dimensions. After exact level-and-Group lookup, independent multiplicative jitter is applied: up to ±5% for small responses, decreasing linearly to ±1% at each Group's measured 95th-percentile magnitude. This avoids copying source values while preserving signs, tails, channel correlation, and cycle drift without a Gaussian assumption.
 
-The checkpoint consumes the generated 256-value hardware row, never the original 16-value input. The simulator closely reproduces the calibrated hardware distribution, but it remains a statistical simulation rather than an individual physical-device measurement.
+The checkpoint consumes the generated 256-value hardware row, never the original 16-value input. The runtime response bank contains 256 levels × 400 cycles × 16 Groups from the supplied physical-device workbook. The former Gaussian parameter CSV is retained only as a historical artifact and is no longer loaded by inference.
 
 Do not keep runtime CSV files open in WPS or Excel during inference because those
 applications may lock the files on Windows. Continuous inference logs the lock and

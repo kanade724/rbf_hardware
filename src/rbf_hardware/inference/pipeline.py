@@ -14,8 +14,8 @@ import numpy as np
 from ..configuration.settings import InferencePaths
 from ..data.csv_store import CsvRecordStore, CsvRowError, NumericCsvStore
 from ..modeling.predictor import JointGaussianPredictor
+from .empirical_response import EmpiricalHardwareResponseBank
 from .experiment_aggregation import HardwareExperimentRecorder
-from .hardware_simulation import GaussianCalibrationBank
 from .preprocessing import DifferentialLevelQuantizer
 
 
@@ -53,23 +53,27 @@ class StreamingInferencePipeline:
         input_features: int,
         basis_per_dimension: int,
         quantizer: DifferentialLevelQuantizer,
-        calibration_bank: GaussianCalibrationBank,
+        response_bank: EmpiricalHardwareResponseBank,
         predictor: JointGaussianPredictor,
         sampling_mode: str,
         random_seed: int,
         logger: logging.Logger,
         experiment_recorder: HardwareExperimentRecorder | None = None,
+        empirical_noise_minimum_rate: float = 0.01,
+        empirical_noise_maximum_rate: float = 0.05,
     ) -> None:
         self.paths = paths
         self.input_features = input_features
         self.basis_per_dimension = basis_per_dimension
         self.quantizer = quantizer
-        self.calibration_bank = calibration_bank
+        self.response_bank = response_bank
         self.predictor = predictor
         self.sampling_mode = sampling_mode
         self.random_generator = np.random.default_rng(random_seed)
         self.logger = logger
         self.experiment_recorder = experiment_recorder
+        self.empirical_noise_minimum_rate = empirical_noise_minimum_rate
+        self.empirical_noise_maximum_rate = empirical_noise_maximum_rate
         self.raw_store = NumericCsvStore(paths.raw_samples_file, input_features)
         self.differential_store = NumericCsvStore(
             paths.differential_features_file, input_features
@@ -87,9 +91,9 @@ class StreamingInferencePipeline:
                 f"Checkpoint expects {checkpoint_features} hardware features; "
                 f"pipeline produces {expected_hardware_features}."
             )
-        if calibration_bank.group_count != basis_per_dimension:
+        if response_bank.group_count != basis_per_dimension:
             raise ValueError(
-                f"Calibration has {calibration_bank.group_count} groups; "
+                f"Response bank has {response_bank.group_count} groups; "
                 f"expected {basis_per_dimension}."
             )
 
@@ -112,8 +116,8 @@ class StreamingInferencePipeline:
             raw_minimum=float(inference["raw_minimum"]),
             raw_maximum=float(inference["raw_maximum"]),
         )
-        calibration_bank = GaussianCalibrationBank.load(
-            paths.gaussian_calibration_file,
+        response_bank = EmpiricalHardwareResponseBank.load(
+            paths.empirical_response_file,
             expected_groups=basis_per_dimension,
             expected_levels=quantizer.levels,
         )
@@ -133,12 +137,18 @@ class StreamingInferencePipeline:
             input_features=input_features,
             basis_per_dimension=basis_per_dimension,
             quantizer=quantizer,
-            calibration_bank=calibration_bank,
+            response_bank=response_bank,
             predictor=predictor,
             sampling_mode=sampling_mode or str(inference["sampling_mode"]),
             random_seed=int(inference["random_seed"]),
             logger=logger,
             experiment_recorder=experiment_recorder,
+            empirical_noise_minimum_rate=float(
+                inference["empirical_noise_minimum_rate"]
+            ),
+            empirical_noise_maximum_rate=float(
+                inference["empirical_noise_maximum_rate"]
+            ),
         )
 
     def _validate_stage_counts(self) -> tuple[int, int, int, int, int]:
@@ -185,10 +195,12 @@ class StreamingInferencePipeline:
         new_differential_rows = self.differential_store.read_rows(hardware_rows)
         simulated_count = 0
         if len(new_differential_rows):
-            hardware_values = self.calibration_bank.simulate(
+            hardware_values = self.response_bank.simulate(
                 new_differential_rows,
                 sampling_mode=self.sampling_mode,
                 random_generator=self.random_generator,
+                minimum_noise_rate=self.empirical_noise_minimum_rate,
+                maximum_noise_rate=self.empirical_noise_maximum_rate,
             )
             simulated_count = self.hardware_store.append_rows(hardware_values)
             start_row = hardware_rows + 1

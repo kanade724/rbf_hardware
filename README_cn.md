@@ -15,7 +15,8 @@
 → 按train_in.csv/test_in.csv规则归一化到0～1
 → 映射到differential_levels.csv中的256个离散等级
 → 追加到16维差分中间表
-→ 按16组Gaussian均值和标准差生成16×16硬件响应
+→ 从400次实测响应库选择同一个物理Cycle
+→ 按16个差分等级分别查出该Cycle的16组真实硬件响应
 → 追加到256维模拟硬件表
 → 将本次实验的“差分等级+对应16个硬件值”合并到独立17列表
 → checkpoints/weights.pt完成联合Gaussian变换和分类
@@ -28,17 +29,28 @@
 
 - `dataset/csv/train_in.csv` 和 `test_in.csv`：16 个 0～1 特征加标签，无表头；
 - `dataset/csv/differential_levels.csv`：表头加 256 个严格递增等级，不是 265 个；
-- `dataset/calibration/gaussian_fitting_parameters.csv`：16 个 Group × 256 个等级，共 4096 行；
-- `dataset/calibration/gaussian_fitting_parameters_group_1.csv`：用户上传的单 Group 原表备份；
+- `dataset/empirical/hardware_response_samples.npz`：256等级 × 400 Cycle × 16 Group的完整实测响应库；
+- `dataset/empirical/hardware_response_empirical_mapping.csv`：256等级 × 16 Group的可读统计映射表；
+- `dataset/empirical/hardware_response_metadata.json`：实测源文件哈希、维度和采样规则；
+- `dataset/empirical/hardware_response_validation.json`：与439条真实硬件测试数据的对照指标；
+- `dataset/calibration/gaussian_fitting_parameters.csv`：旧Gaussian拟合表，仅保留作历史参考，运行时不再加载；
 - `checkpoints/weights.pt`：`format_version=2`，输入 256 维模拟或真实硬件响应。
 
-规范校准表列名统一为：
+经验统计映射表每一行对应一个等级和一个Group，列为：
 
 ```text
-group_index,differential_level,amplitude,mean,std_dev
+level_index,differential_level,group_index,sample_count,mean,std_dev,
+minimum,q01,q05,q25,median,q75,q95,q99,maximum
 ```
 
-每个输入维度按 dimension-major 顺序生成 16 个 Group 响应。`sampling_mode=gaussian` 时根据说明文件使用 `normal(mean, std_dev)` 采样；`mean` 模式用于确定性验证。
+`sampling_mode=empirical` 不拟合Gaussian，也不人工限制正负或宽度。每保存一个
+数字，程序从400次物理Cycle中随机选择一个Cycle；该数字的16个差分维度都使用
+同一个Cycle，再分别按等级查出完整16 Group响应。随后对每个响应增加独立乘性
+均匀噪声。每个Group以自身实测绝对幅值95分位作为大信号参考，噪声范围按绝对
+响应大小从小信号±5%线性下降到大信号±1%。这使输出不会逐值复制源数据，同时
+保留响应符号、实测形状、偏态、长尾、通道相关性和Cycle漂移。`mean` 模式不加
+随机噪声，使用400次Cycle逐等级均值，用于确定性验证。最终256维布局仍为
+dimension-major，与真实硬件和checkpoint一致。
 
 ## 目录结构
 
@@ -144,6 +156,13 @@ python .\rbf-hardware\run_hardware_inference.py `
 
 ## 验证结果
 
-当前 checkpoint 在真实 `test_out_400.csv` 上准确率为 93.62%。使用 16 组 Gaussian 参数均值模拟全部 439 行时，准确率为 94.31%；按校准标准差随机采样时为 93.85%。两种模拟与真实硬件预测的一致率均为 99.32%，硬件向量相关系数分别为 0.99982 和 0.99964。
+当前 checkpoint 在真实 `test_out_400.csv` 上准确率为 93.62%。使用400 Cycle
+经验库均值映射439条数据时，准确率为93.85%，与真实硬件预测一致率99.32%，
+硬件向量相关系数0.99983。使用10个随机种子进行整Cycle经验重采样时，平均
+准确率93.53%（91.80%～94.08%），平均预测一致率98.38%，平均硬件相关系数
+0.99938。
 
-因此，该流程可以体现拟合校准分布下的硬件统计响应和噪声结果，且最终 checkpoint 只消费生成后的 256 维硬件表，不会绕过硬件层直接使用 16 维原始输入。但它仍是基于 `mean/std_dev` 的模拟硬件结果，不能替代某一次真实器件采集值；连接真实硬件时，只需让设备按相同 dimension-major 顺序写入 `pen_digits_hardware.csv`。
+经验模拟以真实400次硬件响应为基底并加入1%～5%的幅值自适应随机扰动，不再
+依赖旧Gaussian参数或人为±20%截断，也不会逐值照抄源表。最终checkpoint只消费
+生成后的256维硬件表，不会绕过硬件层直接使用16维原始输入。连接在线真实硬件
+时，只需让设备按相同dimension-major顺序写入 `pen_digits_hardware.csv`。

@@ -38,9 +38,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--once", action="store_true", help="Process available rows and exit.")
     parser.add_argument(
         "--sampling-mode",
-        choices=("gaussian", "mean"),
+        choices=("empirical", "mean"),
         default=None,
-        help="Override stochastic Gaussian sampling; mean is useful for deterministic verification.",
+        help="Override empirical cycle sampling; mean is useful for deterministic verification.",
     )
     parser.add_argument("--raw-input", type=Path, default=None)
     parser.add_argument("--differential-output", type=Path, default=None)
@@ -49,7 +49,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--predictions-output", type=Path, default=None)
     parser.add_argument("--report-output", type=Path, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--calibration", type=Path, default=None)
+    parser.add_argument("--response-bank", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -89,8 +89,8 @@ def main() -> None:
         ),
         report_file=resolved_override(arguments.report_output, configured_paths.report_file),
         checkpoint_file=resolved_override(arguments.checkpoint, configured_paths.checkpoint_file),
-        gaussian_calibration_file=resolved_override(
-            arguments.calibration, configured_paths.gaussian_calibration_file
+        empirical_response_file=resolved_override(
+            arguments.response_bank, configured_paths.empirical_response_file
         ),
     )
     logger = setup_logging(
@@ -105,7 +105,12 @@ def main() -> None:
     logger.info("[实验] 独立聚合表目录：%s", paths.experiment_output_dir)
     logger.info("[同步] 推理报告文件：%s", paths.report_file)
     logger.info("[推理] checkpoint：%s", paths.checkpoint_file)
-    logger.info("[推理] Gaussian校准文件：%s", paths.gaussian_calibration_file)
+    logger.info("[推理] 400循环实测硬件响应库：%s", paths.empirical_response_file)
+    logger.info(
+        "[推理] 自适应随机噪声：小信号±%.1f%%，大信号±%.1f%%",
+        float(config["inference"]["empirical_noise_maximum_rate"]) * 100,
+        float(config["inference"]["empirical_noise_minimum_rate"]) * 100,
+    )
 
     pipeline = StreamingInferencePipeline.build(
         config,

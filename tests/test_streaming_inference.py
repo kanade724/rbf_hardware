@@ -11,11 +11,11 @@ import numpy as np
 
 from rbf_hardware.configuration.settings import InferencePaths
 from rbf_hardware.data.csv_store import CsvRecordStore, NumericCsvStore
+from rbf_hardware.inference.empirical_response import EmpiricalHardwareResponseBank
 from rbf_hardware.inference.experiment_aggregation import (
     HardwareExperimentAggregator,
     HardwareExperimentRecorder,
 )
-from rbf_hardware.inference.hardware_simulation import GaussianCalibrationBank
 from rbf_hardware.inference.pipeline import (
     PREDICTION_HEADER,
     REPORT_HEADER,
@@ -43,58 +43,69 @@ class DifferentialLevelQuantizerTests(unittest.TestCase):
             np.testing.assert_array_equal(actual, np.asarray([[0.0, 0.5, 1.0]]))
 
 
-class GaussianCalibrationBankTests(unittest.TestCase):
-    def test_mean_simulation_uses_dimension_major_group_layout(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            calibration_path = Path(temporary_directory) / "calibration.csv"
-            with calibration_path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.writer(handle, lineterminator="\n")
-                writer.writerow(
-                    ("group_index", "differential_level", "amplitude", "mean", "std_dev")
-                )
-                for group_index in (1, 2):
-                    for level_index, level in enumerate((0.0, 0.5, 1.0)):
-                        writer.writerow(
-                            (group_index, level, 1.0, group_index * 10 + level_index, 0.0)
-                        )
-            bank = GaussianCalibrationBank.load(
-                calibration_path,
-                expected_groups=2,
-                expected_levels=np.asarray((0.0, 0.5, 1.0)),
-            )
-            actual = bank.simulate(
-                np.asarray([[0.0, 1.0], [0.5, 0.0]]),
-                sampling_mode="mean",
-                random_generator=np.random.default_rng(42),
-            )
-            expected = np.asarray(
-                [[10.0, 20.0, 12.0, 22.0], [11.0, 21.0, 10.0, 20.0]],
-                dtype=np.float32,
-            )
-            np.testing.assert_array_equal(actual, expected)
+class EmpiricalHardwareResponseBankTests(unittest.TestCase):
+    @staticmethod
+    def _bank() -> EmpiricalHardwareResponseBank:
+        samples = np.empty((3, 2, 2), dtype=np.float32)
+        for level_index in range(3):
+            for cycle_index in range(2):
+                base = level_index * 100 + cycle_index * 10
+                samples[level_index, cycle_index] = (base + 1, base + 2)
+        return EmpiricalHardwareResponseBank(
+            levels=np.asarray((0.0, 0.5, 1.0)),
+            response_samples=samples,
+            group_magnitude_references=np.asarray((250.0, 250.0)),
+        )
 
-    def test_accepts_float32_round_trip_of_csv_levels(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            calibration_path = Path(temporary_directory) / "calibration.csv"
-            levels = np.asarray((0.0, 0.058823533, 1.0), dtype=np.float64)
-            with calibration_path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.writer(handle, lineterminator="\n")
-                writer.writerow(
-                    ("group_index", "differential_level", "amplitude", "mean", "std_dev")
-                )
-                for level_index, level in enumerate(levels):
-                    writer.writerow((1, level, 1.0, level_index, 0.0))
-            bank = GaussianCalibrationBank.load(
-                calibration_path,
-                expected_groups=1,
-                expected_levels=levels,
-            )
-            actual = bank.simulate(
-                np.asarray([[np.float32(levels[1])]], dtype=np.float32),
-                sampling_mode="mean",
-                random_generator=np.random.default_rng(42),
-            )
-            np.testing.assert_array_equal(actual, np.asarray([[1.0]], dtype=np.float32))
+    def test_empirical_mode_uses_one_shared_cycle_across_dimensions(self) -> None:
+        actual = self._bank().simulate(
+            np.asarray([[0.0, 1.0], [0.5, 0.0]]),
+            sampling_mode="empirical",
+            random_generator=np.random.default_rng(42),
+            minimum_noise_rate=0.0,
+            maximum_noise_rate=0.0,
+        ).reshape(2, 2, 2)
+        level_bases = np.asarray([[0.0, 200.0], [100.0, 0.0]])
+        cycle_offsets = actual[:, :, 0] - level_bases - 1.0
+        self.assertTrue(np.isin(cycle_offsets, (0.0, 10.0)).all())
+        np.testing.assert_array_equal(cycle_offsets[:, 0], cycle_offsets[:, 1])
+
+    def test_mean_mode_uses_measured_cycle_average(self) -> None:
+        actual = self._bank().simulate(
+            np.asarray([[0.0, 1.0]]),
+            sampling_mode="mean",
+            random_generator=np.random.default_rng(42),
+        )
+        np.testing.assert_array_equal(
+            actual,
+            np.asarray([[6.0, 7.0, 206.0, 207.0]], dtype=np.float32),
+        )
+
+    def test_noise_is_five_percent_for_small_and_one_percent_for_large(self) -> None:
+        bank = EmpiricalHardwareResponseBank(
+            levels=np.asarray((0.0,)),
+            response_samples=np.asarray(
+                [[[1.0, 100.0], [1.0, 100.0]]],
+                dtype=np.float32,
+            ),
+            group_magnitude_references=np.asarray((100.0, 100.0)),
+        )
+        actual = bank.simulate(
+            np.zeros((10_000, 1), dtype=np.float32),
+            sampling_mode="empirical",
+            random_generator=np.random.default_rng(42),
+            minimum_noise_rate=0.01,
+            maximum_noise_rate=0.05,
+        )
+        small_relative_noise = np.abs(actual[:, 0] - 1.0)
+        large_relative_noise = np.abs(actual[:, 1] - 100.0) / 100.0
+        self.assertLessEqual(float(small_relative_noise.max()), 0.05)
+        self.assertGreater(float(small_relative_noise.max()), 0.045)
+        self.assertLessEqual(float(large_relative_noise.max()), 0.01 + 1.0e-7)
+        self.assertGreater(
+            float(small_relative_noise.std()),
+            float(large_relative_noise.std()) * 3.0,
+        )
 
 
 class NumericCsvStoreTests(unittest.TestCase):
@@ -272,7 +283,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 predictions_file=root / "predictions.csv",
                 report_file=root / "report.csv",
                 differential_levels_file=root / "levels.csv",
-                gaussian_calibration_file=root / "calibration.csv",
+                empirical_response_file=root / "response_bank.npz",
                 checkpoint_file=root / "weights.pt",
                 log_file=root / "app.log",
             )
@@ -283,11 +294,15 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 raw_minimum=0.0,
                 raw_maximum=100.0,
             )
-            calibration = GaussianCalibrationBank(
+            response_bank = EmpiricalHardwareResponseBank(
                 levels=levels,
-                amplitudes=np.ones((2, 2)),
-                means=np.asarray(((0.0, 0.25), (0.0, 0.75))),
-                standard_deviations=np.zeros((2, 2)),
+                response_samples=np.asarray(
+                    [
+                        [[0.0, 0.0], [0.0, 0.0]],
+                        [[0.25, 0.75], [0.25, 0.75]],
+                    ]
+                ),
+                group_magnitude_references=np.asarray((1.0, 1.0)),
             )
             predictor = _CapturingPredictor()
             experiment_recorder = HardwareExperimentRecorder(
@@ -302,7 +317,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 input_features=1,
                 basis_per_dimension=2,
                 quantizer=quantizer,
-                calibration_bank=calibration,
+                response_bank=response_bank,
                 predictor=predictor,
                 sampling_mode="mean",
                 random_seed=42,
@@ -341,7 +356,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 predictions_file=root / "predictions.csv",
                 report_file=root / "report.csv",
                 differential_levels_file=root / "levels.csv",
-                gaussian_calibration_file=root / "calibration.csv",
+                empirical_response_file=root / "response_bank.npz",
                 checkpoint_file=root / "weights.pt",
                 log_file=root / "app.log",
             )
@@ -352,11 +367,12 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 raw_minimum=0.0,
                 raw_maximum=100.0,
             )
-            calibration = GaussianCalibrationBank(
+            response_bank = EmpiricalHardwareResponseBank(
                 levels=levels,
-                amplitudes=np.ones((1, 2)),
-                means=np.asarray(((0.0, 1.0),)),
-                standard_deviations=np.zeros((1, 2)),
+                response_samples=np.asarray(
+                    [[[0.0], [0.0]], [[1.0], [1.0]]]
+                ),
+                group_magnitude_references=np.asarray((1.0,)),
             )
             NumericCsvStore(paths.raw_samples_file, 1).append_rows([[100.0]])
             NumericCsvStore(paths.differential_features_file, 1).append_rows([[1.0]])
@@ -369,7 +385,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 input_features=1,
                 basis_per_dimension=1,
                 quantizer=quantizer,
-                calibration_bank=calibration,
+                response_bank=response_bank,
                 predictor=_FakePredictor(),
                 sampling_mode="mean",
                 random_seed=42,

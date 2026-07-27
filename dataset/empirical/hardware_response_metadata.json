@@ -1,0 +1,11 @@
+{
+  "format_version": 1,
+  "source_workbook": "400次循环归一化_新规则.xlsx",
+  "source_sha256": "ccbfa341a48066276d4a00c2b621014227be8d93ce2e0636dac0655396105ab5",
+  "level_count": 256,
+  "cycle_count": 400,
+  "group_count": 16,
+  "response_layout": "level,cycle,group",
+  "group_magnitude_reference": "95th percentile of abs(response) per Group",
+  "sampling_rule": "one shared physical cycle per saved digit; exact 16-Group row lookup for each quantized level, followed by independent magnitude-adaptive multiplicative jitter"
+}

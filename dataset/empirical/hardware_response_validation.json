@@ -1,0 +1,17 @@
+{
+  "evaluation_samples": 439,
+  "actual_hardware_accuracy": 0.9362186788154897,
+  "empirical_mean_accuracy": 0.9384965831435079,
+  "empirical_mean_prediction_agreement": 0.9931662870159453,
+  "empirical_mean_hardware_correlation": 0.9998311770508347,
+  "empirical_cycle_seed_count": 10,
+  "adaptive_noise_minimum_rate": 0.01,
+  "adaptive_noise_maximum_rate": 0.05,
+  "empirical_cycle_accuracy_mean": 0.9353075170842823,
+  "empirical_cycle_accuracy_min": 0.9179954441913439,
+  "empirical_cycle_accuracy_max": 0.9407744874715261,
+  "empirical_cycle_prediction_agreement_mean": 0.9838268792710707,
+  "empirical_cycle_hardware_correlation_mean": 0.9993763292467772,
+  "empirical_cycle_hardware_correlation_min": 0.9993693870889441,
+  "empirical_cycle_mean_absolute_error": 3.994356809836695e-08
+}

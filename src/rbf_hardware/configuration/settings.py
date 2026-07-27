@@ -35,7 +35,7 @@ class InferencePaths:
     predictions_file: Path
     report_file: Path
     differential_levels_file: Path
-    gaussian_calibration_file: Path
+    empirical_response_file: Path
     checkpoint_file: Path
     log_file: Path
 
@@ -270,7 +270,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         "predictions_file",
         "report_file",
         "differential_levels_file",
-        "gaussian_calibration_file",
+        "empirical_response_file",
         "checkpoint_file",
     }
     missing_inference_paths = sorted(required_inference_paths - inference.keys())
@@ -284,8 +284,15 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise ConfigError("inference.basis_per_dimension must be 16.")
     if int(inference.get("quantization_levels", 0)) != 256:
         raise ConfigError("inference.quantization_levels must be 256.")
-    if inference.get("sampling_mode") not in {"gaussian", "mean"}:
-        raise ConfigError("inference.sampling_mode must be gaussian or mean.")
+    if inference.get("sampling_mode") not in {"empirical", "mean"}:
+        raise ConfigError("inference.sampling_mode must be empirical or mean.")
+    minimum_noise_rate = float(inference.get("empirical_noise_minimum_rate", -1))
+    maximum_noise_rate = float(inference.get("empirical_noise_maximum_rate", -1))
+    if not 0 <= minimum_noise_rate <= maximum_noise_rate <= 1:
+        raise ConfigError(
+            "inference empirical noise rates must satisfy "
+            "0 <= minimum <= maximum <= 1."
+        )
     if float(inference.get("poll_interval_seconds", 0)) <= 0:
         raise ConfigError("inference.poll_interval_seconds must be positive.")
     if float(inference.get("debounce_seconds", -1)) < 0:
@@ -343,7 +350,7 @@ def resolve_inference_paths(config: dict[str, Any]) -> InferencePaths:
         predictions_file=resolve_value(str(inference["predictions_file"])),
         report_file=resolve_value(str(inference["report_file"])),
         differential_levels_file=resolve_value(str(inference["differential_levels_file"])),
-        gaussian_calibration_file=resolve_value(str(inference["gaussian_calibration_file"])),
+        empirical_response_file=resolve_value(str(inference["empirical_response_file"])),
         checkpoint_file=resolve_value(str(inference["checkpoint_file"])),
         log_file=resolve_value(str(path_config["log_file"])),
     )
