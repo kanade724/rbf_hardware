@@ -104,6 +104,7 @@ inference:
   raw_samples_file: runtime/pen_digits_raw.csv
   differential_features_file: runtime/pen_digits_differential.csv
   hardware_features_file: runtime/pen_digits_hardware.csv
+  experiment_output_dir: runtime/hardware_experiments
   predictions_file: runtime/pen_digits_predictions.csv
   report_file: runtime/pen_digits_inference_report.csv
   differential_levels_file: rbf-hardware/dataset/csv/differential_levels.csv

@@ -31,6 +31,7 @@ class InferencePaths:
     raw_samples_file: Path
     differential_features_file: Path
     hardware_features_file: Path
+    experiment_output_dir: Path
     predictions_file: Path
     report_file: Path
     differential_levels_file: Path
@@ -265,6 +266,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         "raw_samples_file",
         "differential_features_file",
         "hardware_features_file",
+        "experiment_output_dir",
         "predictions_file",
         "report_file",
         "differential_levels_file",
@@ -337,6 +339,7 @@ def resolve_inference_paths(config: dict[str, Any]) -> InferencePaths:
         raw_samples_file=resolve_value(str(inference["raw_samples_file"])),
         differential_features_file=resolve_value(str(inference["differential_features_file"])),
         hardware_features_file=resolve_value(str(inference["hardware_features_file"])),
+        experiment_output_dir=resolve_value(str(inference["experiment_output_dir"])),
         predictions_file=resolve_value(str(inference["predictions_file"])),
         report_file=resolve_value(str(inference["report_file"])),
         differential_levels_file=resolve_value(str(inference["differential_levels_file"])),

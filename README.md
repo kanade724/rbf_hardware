@@ -14,13 +14,14 @@ The inference process is a restart-safe, append-only pipeline:
 -> append a 16-value differential row
 -> sample 16 groups per dimension from Gaussian calibration
 -> append a dimension-major 256-value hardware row
+-> create this digit's sorted 17-column differential/hardware aggregate
 -> classify with checkpoints/weights.pt
 -> append the prediction and detailed report
 ```
 
 Operational events and shared-file synchronization are appended to `SURF/app.log`. Agent implementation progress is recorded separately in `SURF/agent.log`.
 
-Runtime CSV files are stored outside this repository in `SURF/runtime/`. This keeps generated samples and reports out of the `rbf-hardware` Git history.
+Runtime CSV files are stored outside this repository in `SURF/runtime/`. Every saved digit creates a uniquely named CSV under `SURF/runtime/hardware_experiments/`. Its first column, `differential_level_index`, is the integer zero-based position in `differential_levels.csv` (`0` through `255`); its next 16 columns are the corresponding hardware block. Equal levels are merged only among that digit's 16 dimensions, and rows are sorted ascending. Data from different digits is never accumulated into one experiment table. This keeps generated samples and reports out of the `rbf-hardware` Git history.
 
 ## Run
 
@@ -42,6 +43,11 @@ python .\rbf-hardware\run_hardware_inference.py --once
 Use `--sampling-mode mean` for deterministic calibration verification. The default `gaussian` mode samples `normal(mean, std_dev)` as described by the calibration instructions.
 
 The checkpoint consumes the generated 256-value hardware row, never the original 16-value input. The simulator closely reproduces the calibrated hardware distribution, but it remains a statistical simulation rather than an individual physical-device measurement.
+
+Do not keep runtime CSV files open in WPS or Excel during inference because those
+applications may lock the files on Windows. Continuous inference logs the lock and
+retries automatically; processing resumes from the incomplete stage after the file
+is closed.
 
 ## Package layout
 

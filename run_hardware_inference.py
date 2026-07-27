@@ -45,6 +45,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--raw-input", type=Path, default=None)
     parser.add_argument("--differential-output", type=Path, default=None)
     parser.add_argument("--hardware-output", type=Path, default=None)
+    parser.add_argument("--experiment-output-dir", type=Path, default=None)
     parser.add_argument("--predictions-output", type=Path, default=None)
     parser.add_argument("--report-output", type=Path, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None)
@@ -80,6 +81,9 @@ def main() -> None:
         hardware_features_file=resolved_override(
             arguments.hardware_output, configured_paths.hardware_features_file
         ),
+        experiment_output_dir=resolved_override(
+            arguments.experiment_output_dir, configured_paths.experiment_output_dir
+        ),
         predictions_file=resolved_override(
             arguments.predictions_output, configured_paths.predictions_file
         ),
@@ -98,6 +102,7 @@ def main() -> None:
     logger.info("[同步] 原始样本文件：%s", paths.raw_samples_file)
     logger.info("[同步] 差分特征文件：%s", paths.differential_features_file)
     logger.info("[同步] 模拟硬件特征文件：%s", paths.hardware_features_file)
+    logger.info("[实验] 独立聚合表目录：%s", paths.experiment_output_dir)
     logger.info("[同步] 推理报告文件：%s", paths.report_file)
     logger.info("[推理] checkpoint：%s", paths.checkpoint_file)
     logger.info("[推理] Gaussian校准文件：%s", paths.gaussian_calibration_file)
@@ -109,7 +114,17 @@ def main() -> None:
         sampling_mode=arguments.sampling_mode,
     )
     if arguments.once:
-        progress = pipeline.process_once()
+        try:
+            progress = pipeline.process_once()
+        except PermissionError as error:
+            locked_file = error.filename or "运行时CSV"
+            logger.error(
+                "[同步] 文件正被WPS、Excel或其他程序占用：%s；请关闭该CSV后重试",
+                locked_file,
+            )
+            raise SystemExit(
+                f"文件被占用：{locked_file}。请关闭WPS、Excel或CSV预览器后重试。"
+            ) from None
         print(
             "Processed "
             f"normalized={progress.normalized_rows}, "

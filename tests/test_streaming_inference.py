@@ -5,11 +5,16 @@ import logging
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 
 from rbf_hardware.configuration.settings import InferencePaths
 from rbf_hardware.data.csv_store import CsvRecordStore, NumericCsvStore
+from rbf_hardware.inference.experiment_aggregation import (
+    HardwareExperimentAggregator,
+    HardwareExperimentRecorder,
+)
 from rbf_hardware.inference.hardware_simulation import GaussianCalibrationBank
 from rbf_hardware.inference.pipeline import (
     PREDICTION_HEADER,
@@ -104,6 +109,115 @@ class NumericCsvStoreTests(unittest.TestCase):
             )
 
 
+class HardwareExperimentAggregatorTests(unittest.TestCase):
+    def test_merges_equal_levels_only_within_one_digit_and_sorts_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_file = Path(temporary_directory) / "experiment.csv"
+            aggregator = HardwareExperimentAggregator(
+                output_file,
+                input_features=3,
+                basis_per_dimension=2,
+                differential_levels=np.asarray([0.0, 0.5, 1.0]),
+            )
+            aggregator.add_sample(
+                np.asarray([0.5, 0.0, 0.5], dtype=np.float32),
+                np.asarray(
+                    [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                    dtype=np.float32,
+                ),
+            )
+
+            with output_file.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual(
+                rows[0],
+                [
+                    "differential_level_index",
+                    "hardware_value_01",
+                    "hardware_value_02",
+                ],
+            )
+            np.testing.assert_array_equal(
+                np.asarray(rows[1:], dtype=np.float64),
+                np.asarray(
+                    [
+                        [0.0, 3.0, 4.0],
+                        [1.0, 6.0, 8.0],
+                    ]
+                ),
+            )
+
+    def test_create_produces_header_only_unique_experiment_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_directory = Path(temporary_directory)
+            first = HardwareExperimentAggregator.create(
+                output_directory,
+                input_features=16,
+                basis_per_dimension=16,
+                differential_levels=np.linspace(0.0, 1.0, 256),
+            )
+            second = HardwareExperimentAggregator.create(
+                output_directory,
+                input_features=16,
+                basis_per_dimension=16,
+                differential_levels=np.linspace(0.0, 1.0, 256),
+            )
+            self.assertNotEqual(first.output_file, second.output_file)
+            self.assertTrue(first.output_file.is_file())
+            with first.output_file.open(
+                "r", encoding="utf-8-sig", newline=""
+            ) as handle:
+                self.assertEqual(len(next(csv.reader(handle))), 17)
+
+    def test_recorder_creates_one_independent_table_per_digit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            recorder = HardwareExperimentRecorder(
+                Path(temporary_directory),
+                input_features=2,
+                basis_per_dimension=2,
+                differential_levels=np.asarray([0.0, 0.5, 1.0]),
+            )
+            experiments = recorder.record_batch(
+                np.asarray([[0.5, 0.0], [0.5, 1.0]], dtype=np.float32),
+                np.asarray(
+                    [
+                        [1.0, 2.0, 3.0, 4.0],
+                        [5.0, 6.0, 7.0, 8.0],
+                    ],
+                    dtype=np.float32,
+                ),
+            )
+
+            self.assertEqual(len(experiments), 2)
+            first_rows = NumericCsvStore(experiments[0].output_file, 3).read_rows(1)
+            second_rows = NumericCsvStore(experiments[1].output_file, 3).read_rows(1)
+            np.testing.assert_array_equal(
+                first_rows,
+                np.asarray([[0.0, 3.0, 4.0], [1.0, 1.0, 2.0]]),
+            )
+            np.testing.assert_array_equal(
+                second_rows,
+                np.asarray([[1.0, 5.0, 6.0], [2.0, 7.0, 8.0]]),
+            )
+
+    def test_writes_zero_and_255_as_integer_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_file = Path(temporary_directory) / "experiment.csv"
+            aggregator = HardwareExperimentAggregator(
+                output_file,
+                input_features=2,
+                basis_per_dimension=1,
+                differential_levels=np.linspace(0.0, 1.0, 256),
+            )
+            aggregator.add_sample(
+                np.asarray([0.0, 1.0], dtype=np.float32),
+                np.asarray([10.0, 20.0], dtype=np.float32),
+            )
+            with output_file.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual([row[0] for row in rows[1:]], ["0", "255"])
+
+
 class _FakePredictor:
     metadata = {"hardware_input_features": 1}
     classes = np.asarray((0, 1), dtype=np.int64)
@@ -126,6 +240,25 @@ class _CapturingPredictor:
 
 
 class StreamingInferencePipelineTests(unittest.TestCase):
+    def test_continuous_mode_recovers_from_locked_csv(self) -> None:
+        pipeline = object.__new__(StreamingInferencePipeline)
+        pipeline.logger = Mock()
+        locked_error = PermissionError(
+            13,
+            "Permission denied",
+            "pen_digits_hardware.csv",
+        )
+        pipeline.process_once = Mock(side_effect=[locked_error, None])
+
+        self.assertFalse(pipeline._process_once_with_recovery())
+        self.assertTrue(pipeline._process_once_with_recovery())
+        self.assertEqual(pipeline.process_once.call_count, 2)
+        pipeline.logger.warning.assert_called_once()
+        self.assertIn(
+            "稍后自动重试",
+            pipeline.logger.warning.call_args.args[0],
+        )
+
     def test_predictor_consumes_simulated_hardware_row(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -135,6 +268,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 raw_samples_file=root / "raw.csv",
                 differential_features_file=root / "differential.csv",
                 hardware_features_file=root / "hardware.csv",
+                experiment_output_dir=root / "experiments",
                 predictions_file=root / "predictions.csv",
                 report_file=root / "report.csv",
                 differential_levels_file=root / "levels.csv",
@@ -156,6 +290,12 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 standard_deviations=np.zeros((2, 2)),
             )
             predictor = _CapturingPredictor()
+            experiment_recorder = HardwareExperimentRecorder(
+                root / "experiments",
+                input_features=1,
+                basis_per_dimension=2,
+                differential_levels=levels,
+            )
             NumericCsvStore(paths.raw_samples_file, 1).append_rows([[100.0]])
             pipeline = StreamingInferencePipeline(
                 paths=paths,
@@ -167,6 +307,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 sampling_mode="mean",
                 random_seed=42,
                 logger=logging.getLogger("test_hardware_data_flow"),
+                experiment_recorder=experiment_recorder,
             )
             progress = pipeline.process_once()
             self.assertEqual(progress.normalized_rows, 1)
@@ -175,6 +316,16 @@ class StreamingInferencePipelineTests(unittest.TestCase):
             np.testing.assert_array_equal(
                 predictor.received_features,
                 np.asarray([[0.25, 0.75]], dtype=np.float32),
+            )
+            experiment_files = list((root / "experiments").glob("*.csv"))
+            self.assertEqual(len(experiment_files), 1)
+            with experiment_files[0].open(
+                "r", encoding="utf-8-sig", newline=""
+            ) as handle:
+                experiment_rows = list(csv.reader(handle))
+            np.testing.assert_array_equal(
+                np.asarray(experiment_rows[1:], dtype=np.float64),
+                np.asarray([[1.0, 0.25, 0.75]]),
             )
 
     def test_recovers_when_prediction_was_written_before_report(self) -> None:
@@ -186,6 +337,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 raw_samples_file=root / "raw.csv",
                 differential_features_file=root / "differential.csv",
                 hardware_features_file=root / "hardware.csv",
+                experiment_output_dir=root / "experiments",
                 predictions_file=root / "predictions.csv",
                 report_file=root / "report.csv",
                 differential_levels_file=root / "levels.csv",

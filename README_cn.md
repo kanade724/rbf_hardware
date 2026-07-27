@@ -17,6 +17,7 @@
 → 追加到16维差分中间表
 → 按16组Gaussian均值和标准差生成16×16硬件响应
 → 追加到256维模拟硬件表
+→ 将本次实验的“差分等级+对应16个硬件值”合并到独立17列表
 → checkpoints/weights.pt完成联合Gaussian变换和分类
 → 追加预测表与详细报告
 ```
@@ -97,6 +98,10 @@ python .\rbf-hardware\run_hardware_inference.py --once --sampling-mode mean
 Get-Content .\app.log -Tail 100 -Wait
 ```
 
+不要在推理运行时使用 WPS 或 Excel 直接打开运行时 CSV；这类软件可能在 Windows
+上独占文件。持续推理模式检测到占用后会在 `app.log` 中记录中文告警并自动重试，
+关闭对应表格窗口后会从未完成阶段继续，不会重复处理已经写入的上游行。
+
 查看代理实施记录：
 
 ```powershell
@@ -110,10 +115,32 @@ Get-Content .\agent.log -Tail 100 -Wait
 - `pen_digits_raw.csv`：绘图产生的 16 维原始行；
 - `pen_digits_differential.csv`：16 维 0～1 差分等级行；
 - `pen_digits_hardware.csv`：256 维模拟硬件行；
+- `hardware_experiments/`：每保存一个手写数字时新建一张独立实验聚合表；
 - `pen_digits_predictions.csv`：样本序号和预测数字；
 - `pen_digits_inference_report.csv`：时间、得分、分类边界和完整来源路径。
 
 这些文件构成同一条追加式数据链，不能单独删除中间文件中的部分行。需要重置时，应在停止推理程序后成组归档或清空全部运行时 CSV。
+
+每张实验表命名为
+`pen_digits_hardware_experiment_YYYYMMDD_HHMMSS_ffffff.csv`，共有 17
+列：第一列为整型 `differential_level_index`，后 16 列为
+`hardware_value_01`～`hardware_value_16`。每保存一个数字，就使用该数字唯一的
+一行差分数据和一行 256 维硬件数据立即创建一张新表。差分行第 N 个值与硬件行
+第 N 个连续 16 值块对应；仅在这一个数字的 16 个差分值内部，将相同差分等级的
+硬件块逐列求和并合并为一行，最终按差分等级从小到大排序。不同数字的数据绝不
+写入或累计到同一张实验表。程序一次补处理多条历史新增行时，也会为每条样本
+分别创建一张表。
+
+`differential_level_index` 按该值在 `differential_levels.csv` 中的位置进行
+零基映射，严格输出整数 `0`～`255`：第一项为 `0`，最后一项为 `255`。CSV 中
+不会写成浮点数 `0.0` 或 `255.0`，可直接交给硬件组使用。
+
+需要修改实验表目录时可使用：
+
+```powershell
+python .\rbf-hardware\run_hardware_inference.py `
+  --experiment-output-dir C:\path\to\experiment_tables
+```
 
 ## 验证结果
 

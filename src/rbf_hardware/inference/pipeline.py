@@ -14,6 +14,7 @@ import numpy as np
 from ..configuration.settings import InferencePaths
 from ..data.csv_store import CsvRecordStore, CsvRowError, NumericCsvStore
 from ..modeling.predictor import JointGaussianPredictor
+from .experiment_aggregation import HardwareExperimentRecorder
 from .hardware_simulation import GaussianCalibrationBank
 from .preprocessing import DifferentialLevelQuantizer
 
@@ -57,6 +58,7 @@ class StreamingInferencePipeline:
         sampling_mode: str,
         random_seed: int,
         logger: logging.Logger,
+        experiment_recorder: HardwareExperimentRecorder | None = None,
     ) -> None:
         self.paths = paths
         self.input_features = input_features
@@ -67,6 +69,7 @@ class StreamingInferencePipeline:
         self.sampling_mode = sampling_mode
         self.random_generator = np.random.default_rng(random_seed)
         self.logger = logger
+        self.experiment_recorder = experiment_recorder
         self.raw_store = NumericCsvStore(paths.raw_samples_file, input_features)
         self.differential_store = NumericCsvStore(
             paths.differential_features_file, input_features
@@ -115,6 +118,16 @@ class StreamingInferencePipeline:
             expected_levels=quantizer.levels,
         )
         predictor = JointGaussianPredictor.load(paths.checkpoint_file)
+        experiment_recorder = HardwareExperimentRecorder(
+            paths.experiment_output_dir,
+            input_features=input_features,
+            basis_per_dimension=basis_per_dimension,
+            differential_levels=quantizer.levels,
+        )
+        logger.info(
+            "[实验] 每保存一个数字将创建一张独立硬件聚合表，目录=%s",
+            paths.experiment_output_dir,
+        )
         return cls(
             paths=paths,
             input_features=input_features,
@@ -125,6 +138,7 @@ class StreamingInferencePipeline:
             sampling_mode=sampling_mode or str(inference["sampling_mode"]),
             random_seed=int(inference["random_seed"]),
             logger=logger,
+            experiment_recorder=experiment_recorder,
         )
 
     def _validate_stage_counts(self) -> tuple[int, int, int, int, int]:
@@ -178,6 +192,19 @@ class StreamingInferencePipeline:
             )
             simulated_count = self.hardware_store.append_rows(hardware_values)
             start_row = hardware_rows + 1
+            if self.experiment_recorder is not None:
+                experiments = self.experiment_recorder.record_batch(
+                    new_differential_rows,
+                    hardware_values,
+                )
+                for offset, experiment in enumerate(experiments):
+                    self.logger.info(
+                        "[实验] 已为保存数字创建独立聚合表，样本行=%d，"
+                        "合并后差分等级数=%d，实验表=%s",
+                        start_row + offset,
+                        experiment.aggregated_level_count,
+                        experiment.output_file,
+                    )
             hardware_rows += simulated_count
             self.logger.info(
                 "[同步] 已生成16x16模拟硬件数据，行=%d..%d，共享文件=%s，采样模式=%s",
@@ -257,14 +284,28 @@ class StreamingInferencePipeline:
                 observed_signature = current_signature
                 stable_since = time.monotonic()
             if time.monotonic() - stable_since >= debounce_seconds:
-                try:
-                    self.process_once()
-                except CsvRowError as error:
-                    self.logger.warning(
-                        "[同步] 共享CSV暂时存在未完成行，将稍后重试：%s", error
-                    )
+                if not self._process_once_with_recovery():
                     stable_since = time.monotonic()
             time.sleep(poll_interval_seconds)
+
+    def _process_once_with_recovery(self) -> bool:
+        try:
+            self.process_once()
+        except CsvRowError as error:
+            self.logger.warning(
+                "[同步] 共享CSV暂时存在未完成行，将稍后自动重试：%s",
+                error,
+            )
+            return False
+        except PermissionError as error:
+            locked_file = error.filename or "运行时CSV"
+            self.logger.warning(
+                "[同步] 文件正被WPS、Excel或其他程序占用，将稍后自动重试：%s；"
+                "请关闭该CSV的编辑窗口",
+                locked_file,
+            )
+            return False
+        return True
 
     @staticmethod
     def _file_signature(path: Path) -> tuple[int, int] | None:
