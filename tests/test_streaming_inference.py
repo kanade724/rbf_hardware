@@ -22,6 +22,11 @@ from rbf_hardware.inference.pipeline import (
     StreamingInferencePipeline,
 )
 from rbf_hardware.inference.preprocessing import DifferentialLevelQuantizer
+from rbf_hardware.ui.pen_digits_collector import (
+    CanvasTransform,
+    CollectorSettings,
+    PenDigitDrawingPad,
+)
 
 
 class DifferentialLevelQuantizerTests(unittest.TestCase):
@@ -118,6 +123,38 @@ class NumericCsvStoreTests(unittest.TestCase):
                 store.read_rows(start_index=1),
                 np.asarray([[3.0, 4.0]], dtype=np.float32),
             )
+
+
+class PenDigitDrawingPadTests(unittest.TestCase):
+    def test_canvas_transform_round_trip_preserves_logical_coordinates(self) -> None:
+        transform = CanvasTransform(
+            scale=1.6,
+            offset_x=24.0,
+            offset_y=12.0,
+        )
+        logical_point = (125.0, 375.0)
+
+        display_point = transform.to_display(logical_point)
+
+        self.assertEqual(display_point, (224.0, 612.0))
+        np.testing.assert_allclose(
+            transform.to_logical(display_point),
+            logical_point,
+        )
+
+    def test_normalized_features_preserve_pc_pen_digits_coordinate_rule(self) -> None:
+        drawing_pad = object.__new__(PenDigitDrawingPad)
+        drawing_pad.settings = CollectorSettings(point_count=8)
+        drawing_pad.sampled_points = [
+            (float(index), float(index))
+            for index in range(8)
+        ]
+
+        actual = drawing_pad.normalized_features()
+
+        self.assertEqual(actual.shape, (16,))
+        np.testing.assert_array_equal(actual[:2], np.asarray((0.0, 100.0)))
+        np.testing.assert_array_equal(actual[-2:], np.asarray((100.0, 0.0)))
 
 
 class HardwareExperimentAggregatorTests(unittest.TestCase):
@@ -328,6 +365,11 @@ class StreamingInferencePipelineTests(unittest.TestCase):
             self.assertEqual(progress.normalized_rows, 1)
             self.assertEqual(progress.simulated_rows, 1)
             self.assertEqual(progress.predicted_rows, 1)
+            self.assertEqual(len(progress.predictions), 1)
+            self.assertEqual(progress.predictions[0].sample_index, 1)
+            self.assertEqual(progress.predictions[0].predicted_digit, 1)
+            self.assertAlmostEqual(progress.predictions[0].score_margin, 0.5)
+            self.assertEqual(len(progress.experiment_files), 1)
             np.testing.assert_array_equal(
                 predictor.received_features,
                 np.asarray([[0.25, 0.75]], dtype=np.float32),

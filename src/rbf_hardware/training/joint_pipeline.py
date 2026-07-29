@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 
 from ..modeling.joint_gaussian import FullJointGaussianTransformer, linear_cka
 from ..modeling.ridge_classifier import RidgeLinearClassifier
@@ -130,16 +131,28 @@ def run_joint_gaussian_training(
             transform_count,
             total_candidates,
         )
-        selection_result = select_joint_gaussian_parameters(
-            hardware_features=bundle.train.features,
-            reference_inputs=bundle.train_reference_features,
-            labels=bundle.train.labels,
-            classes=classes,
-            feature_config=feature_config,
-            classifier_config=classifier_config,
-            random_state=random_state,
-            progress=lambda message: logger.info("[LOOK] %s", message),
-        )
+        with tqdm(
+            total=int(selection_config["folds"]) * total_candidates,
+            desc="联合参数搜索",
+            unit="组合",
+            dynamic_ncols=True,
+            leave=True,
+        ) as search_progress:
+            def update_search_progress(step: int, detail: str) -> None:
+                search_progress.set_postfix_str(detail, refresh=False)
+                search_progress.update(step)
+
+            selection_result = select_joint_gaussian_parameters(
+                hardware_features=bundle.train.features,
+                reference_inputs=bundle.train_reference_features,
+                labels=bundle.train.labels,
+                classes=classes,
+                feature_config=feature_config,
+                classifier_config=classifier_config,
+                random_state=random_state,
+                progress=lambda message: logger.info("[LOOK] %s", message),
+                progress_update=update_search_progress,
+            )
         joint_sigma = selection_result.selected_joint_sigma
         calibration_alpha = selection_result.selected_calibration_alpha
         factor_upper = selection_result.selected_factor_upper
@@ -186,6 +199,13 @@ def run_joint_gaussian_training(
         head_alpha = float(classifier_config["ridge_alpha"])
         logger.info("[CHANGE] Joint parameter selection disabled; using fixed configuration")
 
+    final_progress = tqdm(
+        total=4,
+        desc="最终模型训练",
+        unit="阶段",
+        dynamic_ncols=True,
+        leave=True,
+    )
     transformer = _build_transformer(
         feature_config,
         random_state,
@@ -195,6 +215,8 @@ def run_joint_gaussian_training(
     ).fit(bundle.train.features, bundle.train_reference_features)
     train_features = transformer.transform(bundle.train.features)
     test_features = transformer.transform(bundle.test.features)
+    final_progress.set_postfix_str("联合特征变换完成", refresh=False)
+    final_progress.update(1)
     logger.info(
         "[CHANGE] Joint transformer fitted on train only: sigma=%g, calibration_alpha=%g, "
         "factor_clip=[%g,%g]",
@@ -228,6 +250,8 @@ def run_joint_gaussian_training(
     test_predictions = classifier.predict(torch.from_numpy(test_features)).cpu().numpy()
     train_evaluation = evaluate(bundle.train.labels, train_predictions, classes)
     test_evaluation = evaluate(bundle.test.labels, test_predictions, classes)
+    final_progress.set_postfix_str("硬件分类器完成", refresh=False)
+    final_progress.update(1)
 
     ideal_train = transformer.ideal_pc_transform(bundle.train_reference_features)
     ideal_test = transformer.ideal_pc_transform(bundle.test_reference_features)
@@ -245,6 +269,8 @@ def run_joint_gaussian_training(
     pc_test_predictions = pc_classifier.predict(torch.from_numpy(ideal_test)).cpu().numpy()
     pc_train_evaluation = evaluate(bundle.train.labels, pc_train_predictions, classes)
     pc_test_evaluation = evaluate(bundle.test.labels, pc_test_predictions, classes)
+    final_progress.set_postfix_str("PC基准完成", refresh=False)
+    final_progress.update(1)
 
     design = np.column_stack((np.ones(len(train_features)), train_features)).astype(np.float64)
     singular_values = np.linalg.svd(design, compute_uv=False)
@@ -430,6 +456,9 @@ def run_joint_gaussian_training(
         )
         logger.info("Saved train-only joint parameter search: %s", search_path)
 
+    final_progress.set_postfix_str("权重与报告已保存", refresh=False)
+    final_progress.update(1)
+    final_progress.close()
     logger.info("Saved CPU-portable joint weights: %s", weights_path)
     logger.info("Saved hardware confusion matrix CSV: %s", confusion_csv)
     logger.info("Saved hardware confusion matrix SVG: %s", confusion_svg)
