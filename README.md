@@ -22,7 +22,7 @@ The inference process is a restart-safe, append-only pipeline:
 
 Operational events and shared-file synchronization are appended to `SURF/app.log`. Agent implementation progress is recorded separately in `SURF/agent.log`.
 
-Runtime CSV files are stored outside this repository in `SURF/runtime/`. Every saved digit creates a uniquely named CSV under `SURF/runtime/hardware_experiments/`. Its first column, `differential_level_index`, is the integer zero-based position in `differential_levels.csv` (`0` through `255`); its next 16 columns are the corresponding hardware block. Equal levels are merged only among that digit's 16 dimensions, and rows are sorted ascending. Data from different digits is never accumulated into one experiment table. This keeps generated samples and reports out of the `rbf-hardware` Git history.
+Runtime CSV files are stored outside this repository in `SURF/runtime/`. Every saved digit overwrites `SURF/runtime/hardware_experiments/pen_digits_hardware_experiment.csv`, so the file always contains only the latest experiment. Its first column, `differential_level_index`, is the integer zero-based position in `differential_levels.csv` (`0` through `255`); its next 16 columns are the corresponding hardware block. Equal levels are merged only among that digit's 16 dimensions, and rows are sorted ascending. Data from different digits is never accumulated in the table. This keeps generated samples and reports out of the `rbf-hardware` Git history.
 
 ## Run
 

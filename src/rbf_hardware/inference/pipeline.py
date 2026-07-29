@@ -129,8 +129,8 @@ class StreamingInferencePipeline:
             differential_levels=quantizer.levels,
         )
         logger.info(
-            "[实验] 每保存一个数字将创建一张独立硬件聚合表，目录=%s",
-            paths.experiment_output_dir,
+            "[实验] 每保存一个数字将覆盖最新硬件聚合表，文件=%s",
+            paths.experiment_output_dir / "pen_digits_hardware_experiment.csv",
         )
         return cls(
             paths=paths,
@@ -211,7 +211,7 @@ class StreamingInferencePipeline:
                 )
                 for offset, experiment in enumerate(experiments):
                     self.logger.info(
-                        "[实验] 已为保存数字创建独立聚合表，样本行=%d，"
+                        "[实验] 已用保存数字覆盖最新聚合表，样本行=%d，"
                         "合并后差分等级数=%d，实验表=%s",
                         start_row + offset,
                         experiment.aggregated_level_count,

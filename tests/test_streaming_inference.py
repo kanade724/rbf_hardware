@@ -158,7 +158,7 @@ class HardwareExperimentAggregatorTests(unittest.TestCase):
                 ),
             )
 
-    def test_create_produces_header_only_unique_experiment_file(self) -> None:
+    def test_create_reuses_one_fixed_experiment_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_directory = Path(temporary_directory)
             first = HardwareExperimentAggregator.create(
@@ -173,14 +173,18 @@ class HardwareExperimentAggregatorTests(unittest.TestCase):
                 basis_per_dimension=16,
                 differential_levels=np.linspace(0.0, 1.0, 256),
             )
-            self.assertNotEqual(first.output_file, second.output_file)
+            self.assertEqual(first.output_file, second.output_file)
+            self.assertEqual(
+                first.output_file.name,
+                "pen_digits_hardware_experiment.csv",
+            )
             self.assertTrue(first.output_file.is_file())
             with first.output_file.open(
                 "r", encoding="utf-8-sig", newline=""
             ) as handle:
                 self.assertEqual(len(next(csv.reader(handle))), 17)
 
-    def test_recorder_creates_one_independent_table_per_digit(self) -> None:
+    def test_recorder_keeps_only_the_last_digit_in_the_fixed_table(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             recorder = HardwareExperimentRecorder(
                 Path(temporary_directory),
@@ -200,12 +204,8 @@ class HardwareExperimentAggregatorTests(unittest.TestCase):
             )
 
             self.assertEqual(len(experiments), 2)
-            first_rows = NumericCsvStore(experiments[0].output_file, 3).read_rows(1)
+            self.assertEqual(experiments[0].output_file, experiments[1].output_file)
             second_rows = NumericCsvStore(experiments[1].output_file, 3).read_rows(1)
-            np.testing.assert_array_equal(
-                first_rows,
-                np.asarray([[0.0, 3.0, 4.0], [1.0, 1.0, 2.0]]),
-            )
             np.testing.assert_array_equal(
                 second_rows,
                 np.asarray([[1.0, 5.0, 6.0], [2.0, 7.0, 8.0]]),

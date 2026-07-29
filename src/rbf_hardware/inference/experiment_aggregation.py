@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import os
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -49,19 +48,11 @@ class HardwareExperimentAggregator:
         input_features: int,
         basis_per_dimension: int,
         differential_levels: np.ndarray,
-        now: datetime | None = None,
     ) -> "HardwareExperimentAggregator":
-        timestamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S_%f")
         output_file = (
             output_directory.expanduser().resolve()
-            / f"pen_digits_hardware_experiment_{timestamp}.csv"
+            / "pen_digits_hardware_experiment.csv"
         )
-        sequence = 1
-        while output_file.exists():
-            output_file = output_file.with_name(
-                f"pen_digits_hardware_experiment_{timestamp}_{sequence:02d}.csv"
-            )
-            sequence += 1
         return cls(
             output_file,
             input_features=input_features,
@@ -164,7 +155,7 @@ class HardwareExperimentAggregator:
 
 
 class HardwareExperimentRecorder:
-    """Create one independent aggregate table for every saved digit."""
+    """Overwrite one aggregate table with the latest saved digit."""
 
     def __init__(
         self,

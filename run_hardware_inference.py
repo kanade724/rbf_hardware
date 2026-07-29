@@ -102,7 +102,10 @@ def main() -> None:
     logger.info("[同步] 原始样本文件：%s", paths.raw_samples_file)
     logger.info("[同步] 差分特征文件：%s", paths.differential_features_file)
     logger.info("[同步] 模拟硬件特征文件：%s", paths.hardware_features_file)
-    logger.info("[实验] 独立聚合表目录：%s", paths.experiment_output_dir)
+    logger.info(
+        "[实验] 最新聚合表：%s",
+        paths.experiment_output_dir / "pen_digits_hardware_experiment.csv",
+    )
     logger.info("[同步] 推理报告文件：%s", paths.report_file)
     logger.info("[推理] checkpoint：%s", paths.checkpoint_file)
     logger.info("[推理] 400循环实测硬件响应库：%s", paths.empirical_response_file)
