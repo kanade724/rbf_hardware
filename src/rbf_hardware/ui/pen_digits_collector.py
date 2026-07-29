@@ -155,7 +155,7 @@ class PenDigitDrawingPad(ttk.Frame):
 
     def normalized_features(self) -> np.ndarray:
         if not self.is_ready:
-            raise ValueError("请先写下一个完整数字。")
+            raise ValueError("Draw a complete digit first.")
         x_coordinates = [point[0] for point in self.sampled_points]
         y_coordinates = [point[1] for point in self.sampled_points]
         minimum_x, maximum_x = min(x_coordinates), max(x_coordinates)

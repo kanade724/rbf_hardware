@@ -27,7 +27,7 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Open the unified Pen Digits scientific GUI for drawing, collection, "
-            "simulated-hardware inference, and result presentation."
+            "manual hardware inference, and result presentation."
         )
     )
     parser.add_argument(
@@ -91,7 +91,7 @@ def main() -> None:
     except Exception as error:
         logger.exception("[GUI] 初始化推理流水线失败")
         root.withdraw()
-        messagebox.showerror("初始化失败", str(error))
+        messagebox.showerror("Initialization Failed", str(error))
         root.destroy()
         raise SystemExit(1) from error
     UnifiedPenDigitsApplication(
