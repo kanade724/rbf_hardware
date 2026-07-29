@@ -41,7 +41,7 @@ class PenDigitsCollectionApplication:
         self._update_status(False)
 
     def _configure_root(self) -> None:
-        self.root.title("RBF Hardware · Pen Digits 独立采集器")
+        self.root.title("RBF Hardware · Pen Digits Collector")
         self.root.configure(background=self.BACKGROUND)
         self.root.geometry("720x800")
         self.root.minsize(660, 760)
@@ -88,7 +88,7 @@ class PenDigitsCollectionApplication:
         ).pack(anchor="w")
         tk.Label(
             title_group,
-            text="Pen Digits 独立数据采集",
+            text="Pen Digits Data Collector",
             background=self.NAVY,
             foreground="white",
             font=("Microsoft YaHei UI", 18, "bold"),
@@ -106,14 +106,14 @@ class PenDigitsCollectionApplication:
         heading.pack(fill="x", padx=20, pady=(18, 10))
         tk.Label(
             heading,
-            text="手写板",
+            text="Drawing Pad",
             background=self.SURFACE,
             foreground=self.NAVY,
             font=("Microsoft YaHei UI", 14, "bold"),
         ).pack(side="left")
         tk.Label(
             heading,
-            text="仅采集，不在本窗口执行推理",
+            text="Collect samples only; inference is not run in this window",
             background=self.SURFACE,
             foreground=self.MUTED,
             font=("Microsoft YaHei UI", 9),
@@ -138,19 +138,19 @@ class PenDigitsCollectionApplication:
         controls.pack(fill="x", padx=20, pady=(2, 18))
         ttk.Button(
             controls,
-            text="撤销  Ctrl+Z",
+            text="Undo  Ctrl+Z",
             command=self.drawing_pad.undo,
             style="CollectorSecondary.TButton",
         ).pack(side="left")
         ttk.Button(
             controls,
-            text="清空",
+            text="Clear",
             command=self.drawing_pad.clear,
             style="CollectorSecondary.TButton",
         ).pack(side="left", padx=8)
         self.save_button = ttk.Button(
             controls,
-            text="保存样本  Enter",
+            text="Save Sample  Enter",
             command=self.save_sample,
             style="CollectorAccent.TButton",
             state="disabled",
@@ -164,36 +164,39 @@ class PenDigitsCollectionApplication:
 
     def save_sample(self) -> None:
         if not self.drawing_pad.is_ready:
-            messagebox.showwarning("无法保存", "请先在手写板中写下一个完整数字。")
+            messagebox.showwarning(
+                "Cannot Save", "Please draw a complete digit first."
+            )
             return
         try:
             self.sample_store.append_rows(self.drawing_pad.normalized_features())
         except PermissionError:
             messagebox.showerror(
-                "文件被占用",
-                "原始数据表正在被 WPS、Excel 或其他程序占用，请关闭后重试。",
+                "File In Use",
+                "The sample CSV is open in WPS, Excel, or another program. "
+                "Close it and try again.",
             )
             return
         except Exception as error:
-            self.logger.exception("[采集] 独立采集器保存样本失败")
-            messagebox.showerror("保存失败", str(error))
+            self.logger.exception("[Collection] Failed to save sample")
+            messagebox.showerror("Save Failed", str(error))
             return
 
         self.saved_count += 1
         self.logger.info(
-            "[采集] 独立采集器已追加原始样本，行号=%d，共享文件=%s",
+            "[Collection] Appended raw sample, row=%d, shared_file=%s",
             self.saved_count,
             self.sample_store.path,
         )
         self.drawing_pad.clear()
         self.status_text.set(
-            f"已保存第 {self.saved_count} 条样本 · {self.sample_store.path}"
+            f"Saved sample {self.saved_count} · {self.sample_store.path}"
         )
 
     def _update_status(self, ready: bool) -> None:
         if ready:
-            self.status_text.set("已提取 8 个等距点，可以保存样本")
+            self.status_text.set("8 evenly spaced points selected; ready to save")
         else:
             self.status_text.set(
-                f"请写下一个数字 · 文件中已有 {self.saved_count} 条样本"
+                f"Draw a digit · {self.saved_count} samples already saved"
             )

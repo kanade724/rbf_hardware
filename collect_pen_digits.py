@@ -60,7 +60,7 @@ def main() -> None:
         file_mode="a",
     )
     logger.info(
-        "[采集] Pen Digits独立采集器已启动，共享文件=%s",
+        "[Collection] Pen Digits drawing collector started, shared_file=%s",
         output_path,
     )
     sample_store = NumericCsvStore(
@@ -75,7 +75,7 @@ def main() -> None:
         logger=logger,
     )
     root.mainloop()
-    logger.info("[采集] Pen Digits独立采集器已关闭")
+    logger.info("[Collection] Pen Digits drawing collector closed")
 
 
 if __name__ == "__main__":

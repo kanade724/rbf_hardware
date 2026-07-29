@@ -55,14 +55,14 @@ class UnifiedPenDigitsApplication:
         self.last_raw_signature = self._file_signature(sample_store.path)
         self.result_queue: queue.Queue[tuple[str, object]] = queue.Queue()
 
-        self.status_text = tk.StringVar(value="正在初始化硬件响应模型…")
-        self.status_detail = tk.StringVar(value="请稍候")
+        self.status_text = tk.StringVar(value="Initializing hardware response model...")
+        self.status_detail = tk.StringVar(value="Please wait")
         self.predicted_digit = tk.StringVar(value="—")
         self.top_score = tk.StringVar(value="—")
         self.sample_index = tk.StringVar(value="—")
-        self.experiment_file = tk.StringVar(value="尚未生成实验表")
+        self.experiment_file = tk.StringVar(value="No experiment table generated yet")
         self.sample_count_text = tk.StringVar(value=str(self.saved_count))
-        self.pipeline_state = tk.StringVar(value="初始化")
+        self.pipeline_state = tk.StringVar(value="Initializing")
         self.save_button: ttk.Button
 
         self._configure_root()
@@ -77,7 +77,7 @@ class UnifiedPenDigitsApplication:
         self.root.after(self.monitor_interval_ms, self._monitor_new_rows)
 
     def _configure_root(self) -> None:
-        self.root.title("RBF Hardware · Pen Digits 科研实验台")
+        self.root.title("RBF Hardware · Pen Digits Research Workstation")
         self.root.configure(background=self.BACKGROUND)
         self.root.geometry("1220x930")
         self.root.minsize(1120, 820)
@@ -176,7 +176,7 @@ class UnifiedPenDigitsApplication:
         ).pack(anchor="w")
         tk.Label(
             title_group,
-            text="Pen Digits 科研实验台",
+            text="Pen Digits Research Workstation",
             background=self.NAVY,
             foreground="white",
             font=("Microsoft YaHei UI", 18, "bold"),
@@ -193,7 +193,7 @@ class UnifiedPenDigitsApplication:
         ).pack(side="left", padx=(12, 5), pady=7)
         tk.Label(
             mode_badge,
-            text=f"实测响应 · {self.sampling_mode.upper()}",
+            text=f"Measured Response · {self.sampling_mode.upper()}",
             background="#183E59",
             foreground="#D9F6F8",
             font=("Microsoft YaHei UI", 9, "bold"),
@@ -204,14 +204,14 @@ class UnifiedPenDigitsApplication:
         title.pack(fill="x", padx=20, pady=(18, 10))
         tk.Label(
             title,
-            text="01  手写数据采集",
+            text="01  Handwriting Data Collection",
             background=self.SURFACE,
             foreground=self.NAVY,
             font=("Microsoft YaHei UI", 14, "bold"),
         ).pack(side="left")
         tk.Label(
             title,
-            text="自动提取 8 个等距轨迹点",
+            text="Automatically extracts 8 evenly spaced trajectory points",
             background=self.SURFACE,
             foreground=self.MUTED,
             font=("Microsoft YaHei UI", 9),
@@ -227,7 +227,7 @@ class UnifiedPenDigitsApplication:
 
         instruction = tk.Label(
             parent,
-            text="按住鼠标书写数字。红蓝色标记为送入模型的 8 个采样点。",
+            text="Hold the mouse button to draw. The colored markers are the 8 points sent to the model.",
             background=self.SURFACE,
             foreground=self.MUTED,
             font=("Microsoft YaHei UI", 9),
@@ -238,19 +238,19 @@ class UnifiedPenDigitsApplication:
         controls.pack(fill="x", padx=20, pady=(2, 18))
         ttk.Button(
             controls,
-            text="撤销  Ctrl+Z",
+            text="Undo  Ctrl+Z",
             command=self.drawing_pad.undo,
             style="Secondary.TButton",
         ).pack(side="left")
         ttk.Button(
             controls,
-            text="清空",
+            text="Clear",
             command=self.drawing_pad.clear,
             style="Secondary.TButton",
         ).pack(side="left", padx=8)
         self.save_button = ttk.Button(
             controls,
-            text="保存并识别  Enter",
+            text="Save and Recognize  Enter",
             command=self.save_and_infer,
             style="Accent.TButton",
             state="disabled",
@@ -262,7 +262,7 @@ class UnifiedPenDigitsApplication:
         result_header.pack(fill="x", padx=20, pady=(18, 10))
         tk.Label(
             result_header,
-            text="02  硬件推理",
+            text="02  Hardware Inference",
             background=self.SURFACE,
             foreground=self.NAVY,
             font=("Microsoft YaHei UI", 14, "bold"),
@@ -284,7 +284,7 @@ class UnifiedPenDigitsApplication:
         result_left.pack(side="left", fill="both", expand=True, padx=(22, 8), pady=18)
         tk.Label(
             result_left,
-            text="识别结果",
+            text="Recognition Result",
             background=self.NAVY,
             foreground="#9FB9CC",
             font=("Microsoft YaHei UI", 10),
@@ -299,14 +299,14 @@ class UnifiedPenDigitsApplication:
 
         metrics = tk.Frame(result_card, background="#183E59")
         metrics.pack(side="right", fill="y", padx=14, pady=14)
-        self._metric_row(metrics, "样本序号", self.sample_index)
-        self._metric_row(metrics, "最高得分", self.top_score)
+        self._metric_row(metrics, "Sample Number", self.sample_index)
+        self._metric_row(metrics, "Top Score", self.top_score)
 
         stage_section = tk.Frame(parent, background=self.SURFACE)
         stage_section.pack(fill="x", padx=20, pady=(18, 10))
         tk.Label(
             stage_section,
-            text="流水线状态",
+            text="Pipeline Status",
             background=self.SURFACE,
             foreground=self.NAVY,
             font=("Microsoft YaHei UI", 11, "bold"),
@@ -314,7 +314,9 @@ class UnifiedPenDigitsApplication:
         stages = tk.Frame(stage_section, background=self.SURFACE)
         stages.pack(fill="x")
         self.stage_labels: list[tk.Label] = []
-        for index, label in enumerate(("采集", "差分量化", "16×16硬件", "模型识别")):
+        for index, label in enumerate(
+            ("Collection", "Quantization", "16×16 Hardware", "Recognition")
+        ):
             stage = tk.Label(
                 stages,
                 text=f"{index + 1:02d}  {label}",
@@ -329,15 +331,15 @@ class UnifiedPenDigitsApplication:
 
         info_grid = tk.Frame(parent, background=self.SURFACE)
         info_grid.pack(fill="x", padx=20, pady=(4, 12))
-        self._small_info_card(info_grid, "本地样本", self.sample_count_text, 0)
+        self._small_info_card(info_grid, "Local Samples", self.sample_count_text, 0)
         mode_value = tk.StringVar(value=self.sampling_mode.upper())
-        self._small_info_card(info_grid, "响应模式", mode_value, 1)
+        self._small_info_card(info_grid, "Response Mode", mode_value, 1)
 
         experiment_section = tk.Frame(parent, background="#F5F8FB")
         experiment_section.pack(fill="x", padx=20, pady=(0, 12))
         tk.Label(
             experiment_section,
-            text="最近实验表",
+            text="Latest Experiment Table",
             background="#F5F8FB",
             foreground=self.MUTED,
             font=("Microsoft YaHei UI", 8, "bold"),
@@ -355,14 +357,14 @@ class UnifiedPenDigitsApplication:
         history_header.pack(fill="x", padx=20, pady=(0, 6))
         tk.Label(
             history_header,
-            text="最近识别记录",
+            text="Recent Recognition History",
             background=self.SURFACE,
             foreground=self.NAVY,
             font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(side="left")
         ttk.Button(
             history_header,
-            text="打开实验目录",
+            text="Open Experiment Folder",
             command=self.open_experiment_directory,
             style="Secondary.TButton",
         ).pack(side="right")
@@ -373,8 +375,8 @@ class UnifiedPenDigitsApplication:
             show="headings",
             height=3,
         )
-        self.history.heading("sample", text="样本")
-        self.history.heading("digit", text="结果")
+        self.history.heading("sample", text="Sample")
+        self.history.heading("digit", text="Result")
         self.history.column("sample", width=150, anchor="center")
         self.history.column("digit", width=150, anchor="center")
         self.history.pack(fill="both", expand=True, padx=20, pady=(0, 18))
@@ -463,35 +465,42 @@ class UnifiedPenDigitsApplication:
         if hasattr(self, "save_button"):
             self.save_button.configure(state=state)
         if not self.inference_busy:
-            self.status_text.set("轨迹采样完成，可以保存并识别" if ready else "系统就绪")
+            self.status_text.set(
+                "Trajectory sampled; ready to save and recognize"
+                if ready
+                else "System Ready"
+            )
             self.status_detail.set(
-                "按 Enter 快速保存" if ready else "请在手写板中写下一个数字"
+                "Press Enter to save" if ready else "Draw a digit on the pad"
             )
 
     def save_and_infer(self) -> None:
         if self.inference_busy:
             return
         if not self.drawing_pad.is_ready:
-            messagebox.showwarning("无法保存", "请先在手写板中写下一个完整数字。")
+            messagebox.showwarning(
+                "Cannot Save", "Please draw a complete digit first."
+            )
             return
         try:
             features = self.drawing_pad.normalized_features()
             self.sample_store.append_rows(features)
         except PermissionError:
             messagebox.showerror(
-                "文件被占用",
-                "原始数据表正在被 WPS、Excel 或其他程序占用，请关闭后重试。",
+                "File In Use",
+                "The raw data CSV is open in WPS, Excel, or another program. "
+                "Close it and try again.",
             )
             return
         except Exception as error:
-            self.logger.exception("[GUI] 保存手写样本失败")
-            messagebox.showerror("保存失败", str(error))
+            self.logger.exception("[GUI] Failed to save handwriting sample")
+            messagebox.showerror("Save Failed", str(error))
             return
 
         self.saved_count += 1
         self.sample_count_text.set(str(self.saved_count))
         self.logger.info(
-            "[采集] GUI已追加原始样本，行号=%d，共享文件=%s",
+            "[Collection] GUI appended raw sample, row=%d, shared_file=%s",
             self.saved_count,
             self.sample_store.path,
         )
@@ -504,9 +513,11 @@ class UnifiedPenDigitsApplication:
         self.inference_busy = True
         self.drawing_pad.set_enabled(False)
         self.save_button.configure(state="disabled")
-        self.pipeline_state.set("处理中")
-        self.status_text.set("正在执行模拟硬件推理…")
-        self.status_detail.set("归一化 → 差分量化 → 16×16响应 → 模型识别")
+        self.pipeline_state.set("Processing")
+        self.status_text.set("Running simulated hardware inference...")
+        self.status_detail.set(
+            "Normalization → Quantization → 16×16 Response → Recognition"
+        )
         self.activity.start(12)
         self._set_stage_state(0)
         worker = threading.Thread(
@@ -520,7 +531,7 @@ class UnifiedPenDigitsApplication:
         try:
             progress = self.pipeline.process_once()
         except Exception as error:
-            self.logger.exception("[GUI] 自动推理失败")
+            self.logger.exception("[GUI] Automatic inference failed")
             self.result_queue.put(("error", error))
         else:
             self.result_queue.put(("success", progress))
@@ -550,37 +561,40 @@ class UnifiedPenDigitsApplication:
     def _handle_inference_success(self, payload: object) -> None:
         if not isinstance(payload, PipelineProgress):
             raise TypeError("GUI inference worker returned an invalid result.")
-        self.pipeline_state.set("在线")
+        self.pipeline_state.set("Online")
         if payload.changed:
             self._set_stage_state(4)
             if payload.experiment_files:
                 self.experiment_file.set(payload.experiment_files[-1].name)
             for summary in payload.predictions:
                 self._show_prediction(summary)
-            self.status_text.set("硬件模拟与识别完成")
+            self.status_text.set("Hardware simulation and recognition completed")
             self.status_detail.set(
-                f"新增：差分 {payload.normalized_rows} 行 / "
-                f"硬件 {payload.simulated_rows} 行 / "
-                f"预测 {payload.predicted_rows} 行"
+                f"Added: quantized {payload.normalized_rows} / "
+                f"hardware {payload.simulated_rows} / "
+                f"predictions {payload.predicted_rows}"
             )
         else:
             self._set_stage_state(4)
-            self.status_text.set("系统就绪")
-            self.status_detail.set("正在自动侦测新数据行")
+            self.status_text.set("System Ready")
+            self.status_detail.set("Automatically monitoring for new data rows")
 
     def _handle_inference_error(self, payload: object) -> None:
         error = payload if isinstance(payload, Exception) else RuntimeError(str(payload))
-        self.pipeline_state.set("需要检查")
-        self.status_text.set("自动推理未完成")
+        self.pipeline_state.set("Check Required")
+        self.status_text.set("Automatic inference did not complete")
         self.status_detail.set(str(error))
         self._set_stage_error()
         if isinstance(error, PermissionError):
-            message = "运行时 CSV 正被 WPS、Excel 或其他程序占用，请关闭后等待自动重试。"
+            message = (
+                "A runtime CSV is open in WPS, Excel, or another program. "
+                "Close it and wait for the automatic retry."
+            )
         else:
             message = str(error)
         if message != self.last_reported_error:
             self.last_reported_error = message
-            messagebox.showerror("推理失败", message)
+            messagebox.showerror("Inference Failed", message)
 
     def _show_prediction(self, summary: PredictionSummary) -> None:
         self.predicted_digit.set(str(summary.predicted_digit))
@@ -625,7 +639,9 @@ class UnifiedPenDigitsApplication:
             with report_path.open("r", encoding="utf-8-sig", newline="") as handle:
                 rows = list(csv.DictReader(handle))[-8:]
         except (OSError, csv.Error):
-            self.logger.warning("[GUI] 无法读取已有推理记录：%s", report_path)
+            self.logger.warning(
+                "[GUI] Unable to read existing inference history: %s", report_path
+            )
             return
         for row in reversed(rows):
             self.history.insert(
@@ -648,7 +664,7 @@ class UnifiedPenDigitsApplication:
         if os.name == "nt":
             os.startfile(directory)  # type: ignore[attr-defined]
         else:
-            messagebox.showinfo("实验目录", str(directory))
+            messagebox.showinfo("Experiment Folder", str(directory))
 
     @staticmethod
     def _format_number(value: str | None) -> str:

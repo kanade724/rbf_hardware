@@ -71,7 +71,7 @@ def main() -> None:
     )
     sampling_mode = arguments.sampling_mode or str(config["inference"]["sampling_mode"])
     logger.info(
-        "[GUI] Pen Digits统一科研实验台已启动，原始数据=%s，采样模式=%s",
+        "[GUI] Pen Digits research workstation started, raw_data=%s, sampling_mode=%s",
         output_path,
         sampling_mode,
     )
@@ -89,9 +89,9 @@ def main() -> None:
             sampling_mode=sampling_mode,
         )
     except Exception as error:
-        logger.exception("[GUI] 初始化推理流水线失败")
+        logger.exception("[GUI] Failed to initialize inference pipeline")
         root.withdraw()
-        messagebox.showerror("初始化失败", str(error))
+        messagebox.showerror("Initialization Failed", str(error))
         root.destroy()
         raise SystemExit(1) from error
     UnifiedPenDigitsApplication(
@@ -106,7 +106,7 @@ def main() -> None:
         ),
     )
     root.mainloop()
-    logger.info("[GUI] Pen Digits统一科研实验台已关闭")
+    logger.info("[GUI] Pen Digits research workstation closed")
 
 
 if __name__ == "__main__":
