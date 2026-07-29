@@ -1,4 +1,4 @@
-"""Per-experiment aggregation of differential levels and hardware responses."""
+"""Aggregation of one digit into the fixed hardware experiment output."""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 
 import numpy as np
+
+
+HARDWARE_EXPERIMENT_FILE_NAME = "pen_digits_hardware_experiment.csv"
 
 
 class HardwareExperimentAggregator:
@@ -51,7 +54,7 @@ class HardwareExperimentAggregator:
     ) -> "HardwareExperimentAggregator":
         output_file = (
             output_directory.expanduser().resolve()
-            / "pen_digits_hardware_experiment.csv"
+            / HARDWARE_EXPERIMENT_FILE_NAME
         )
         return cls(
             output_file,
@@ -155,7 +158,7 @@ class HardwareExperimentAggregator:
 
 
 class HardwareExperimentRecorder:
-    """Overwrite one aggregate table with the latest saved digit."""
+    """Overwrite the fixed aggregate table for every saved digit."""
 
     def __init__(
         self,
@@ -172,6 +175,10 @@ class HardwareExperimentRecorder:
             differential_levels,
             dtype=np.float64,
         )
+
+    @property
+    def output_file(self) -> Path:
+        return self.output_directory / HARDWARE_EXPERIMENT_FILE_NAME
 
     def record_batch(
         self,

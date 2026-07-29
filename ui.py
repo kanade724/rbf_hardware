@@ -27,7 +27,7 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Open the unified Pen Digits scientific GUI for drawing, collection, "
-            "simulated-hardware inference, and result presentation."
+            "manual hardware inference, and result presentation."
         )
     )
     parser.add_argument(

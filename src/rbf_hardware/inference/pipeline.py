@@ -140,8 +140,8 @@ class StreamingInferencePipeline:
             differential_levels=quantizer.levels,
         )
         logger.info(
-            "[实验] 每保存一个数字将覆盖最新硬件聚合表，文件=%s",
-            paths.experiment_output_dir / "pen_digits_hardware_experiment.csv",
+            "[实验] 每保存一个数字将覆盖固定硬件聚合表，文件=%s",
+            experiment_recorder.output_file,
         )
         return cls(
             paths=paths,
@@ -184,6 +184,23 @@ class StreamingInferencePipeline:
             )
         return raw_rows, differential_rows, hardware_rows, prediction_rows, report_rows
 
+    def has_pending_work(self) -> bool:
+        """Return whether any pipeline stage trails its upstream source."""
+
+        (
+            raw_rows,
+            differential_rows,
+            hardware_rows,
+            prediction_rows,
+            report_rows,
+        ) = self._validate_stage_counts()
+        return bool(
+            differential_rows < raw_rows
+            or hardware_rows < differential_rows
+            or prediction_rows < hardware_rows
+            or report_rows < hardware_rows
+        )
+
     def process_once(self) -> PipelineProgress:
         raw_rows, differential_rows, hardware_rows, prediction_rows, report_rows = (
             self._validate_stage_counts()
@@ -221,12 +238,11 @@ class StreamingInferencePipeline:
                     new_differential_rows,
                     hardware_values,
                 )
-                experiment_files.extend(
-                    experiment.output_file for experiment in experiments
-                )
+                if experiments:
+                    experiment_files.append(experiments[-1].output_file)
                 for offset, experiment in enumerate(experiments):
                     self.logger.info(
-                        "[实验] 已用保存数字覆盖最新聚合表，样本行=%d，"
+                        "[实验] 已覆盖固定硬件聚合表，样本行=%d，"
                         "合并后差分等级数=%d，实验表=%s",
                         start_row + offset,
                         experiment.aggregated_level_count,

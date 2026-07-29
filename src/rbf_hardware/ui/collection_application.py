@@ -41,7 +41,7 @@ class PenDigitsCollectionApplication:
         self._update_status(False)
 
     def _configure_root(self) -> None:
-        self.root.title("RBF Hardware · Pen Digits Collector")
+        self.root.title("RBF Hardware · Pen Digits Standalone Collector")
         self.root.configure(background=self.BACKGROUND)
         self.root.geometry("720x800")
         self.root.minsize(660, 760)
@@ -57,7 +57,7 @@ class PenDigitsCollectionApplication:
             foreground="white",
             borderwidth=0,
             padding=(18, 11),
-            font=("Microsoft YaHei UI", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
         )
         style.map(
             "CollectorAccent.TButton",
@@ -70,7 +70,7 @@ class PenDigitsCollectionApplication:
             foreground=self.NAVY,
             borderwidth=0,
             padding=(15, 10),
-            font=("Microsoft YaHei UI", 10),
+            font=("Segoe UI", 10),
         )
 
     def _build_layout(self) -> None:
@@ -88,10 +88,10 @@ class PenDigitsCollectionApplication:
         ).pack(anchor="w")
         tk.Label(
             title_group,
-            text="Pen Digits Data Collector",
+            text="Pen Digits Standalone Collection",
             background=self.NAVY,
             foreground="white",
-            font=("Microsoft YaHei UI", 18, "bold"),
+            font=("Segoe UI", 18, "bold"),
         ).pack(anchor="w")
 
         card = tk.Frame(
@@ -106,17 +106,17 @@ class PenDigitsCollectionApplication:
         heading.pack(fill="x", padx=20, pady=(18, 10))
         tk.Label(
             heading,
-            text="Drawing Pad",
+            text="HANDWRITING PAD",
             background=self.SURFACE,
             foreground=self.NAVY,
-            font=("Microsoft YaHei UI", 14, "bold"),
+            font=("Segoe UI", 14, "bold"),
         ).pack(side="left")
         tk.Label(
             heading,
-            text="Collect samples only; inference is not run in this window",
+            text="Collection only · inference is not loaded",
             background=self.SURFACE,
             foreground=self.MUTED,
-            font=("Microsoft YaHei UI", 9),
+            font=("Segoe UI", 9),
         ).pack(side="right")
 
         self.drawing_pad = PenDigitDrawingPad(
@@ -131,7 +131,7 @@ class PenDigitsCollectionApplication:
             background=self.SURFACE,
             foreground=self.MUTED,
             anchor="w",
-            font=("Microsoft YaHei UI", 9),
+            font=("Segoe UI", 9),
         ).pack(fill="x", padx=20, pady=(10, 6))
 
         controls = tk.Frame(card, background=self.SURFACE)
@@ -165,7 +165,8 @@ class PenDigitsCollectionApplication:
     def save_sample(self) -> None:
         if not self.drawing_pad.is_ready:
             messagebox.showwarning(
-                "Cannot Save", "Please draw a complete digit first."
+                "Cannot Save",
+                "Draw a complete digit on the handwriting pad first.",
             )
             return
         try:
@@ -173,18 +174,18 @@ class PenDigitsCollectionApplication:
         except PermissionError:
             messagebox.showerror(
                 "File In Use",
-                "The sample CSV is open in WPS, Excel, or another program. "
+                "The raw data CSV is open in WPS, Excel, or another program. "
                 "Close it and try again.",
             )
             return
         except Exception as error:
-            self.logger.exception("[Collection] Failed to save sample")
+            self.logger.exception("[采集] 独立采集器保存样本失败")
             messagebox.showerror("Save Failed", str(error))
             return
 
         self.saved_count += 1
         self.logger.info(
-            "[Collection] Appended raw sample, row=%d, shared_file=%s",
+            "[采集] 独立采集器已追加原始样本，行号=%d，共享文件=%s",
             self.saved_count,
             self.sample_store.path,
         )
@@ -195,8 +196,8 @@ class PenDigitsCollectionApplication:
 
     def _update_status(self, ready: bool) -> None:
         if ready:
-            self.status_text.set("8 evenly spaced points selected; ready to save")
+            self.status_text.set("8 equidistant points extracted · ready to save")
         else:
             self.status_text.set(
-                f"Draw a digit · {self.saved_count} samples already saved"
+                f"Draw a digit · {self.saved_count} samples already stored"
             )
