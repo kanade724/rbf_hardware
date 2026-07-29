@@ -21,6 +21,25 @@ class CollectorSettings:
     minimum_move: float = 1.5
 
 
+@dataclass(frozen=True)
+class CanvasTransform:
+    scale: float
+    offset_x: float
+    offset_y: float
+
+    def to_display(self, point: Point) -> Point:
+        return (
+            self.offset_x + point[0] * self.scale,
+            self.offset_y + point[1] * self.scale,
+        )
+
+    def to_logical(self, point: Point) -> Point:
+        return (
+            (point[0] - self.offset_x) / self.scale,
+            (point[1] - self.offset_y) / self.scale,
+        )
+
+
 class PenDigitDrawingPad(ttk.Frame):
     """Draw a digit and expose the normalized 16-value Pen Digits feature row."""
 
@@ -57,6 +76,7 @@ class PenDigitDrawingPad(ttk.Frame):
         self.canvas.bind("<ButtonPress-1>", self.begin_stroke)
         self.canvas.bind("<B1-Motion>", self.continue_stroke)
         self.canvas.bind("<ButtonRelease-1>", self.end_stroke)
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.redraw()
 
     @property
@@ -68,10 +88,14 @@ class PenDigitDrawingPad(ttk.Frame):
         self.canvas.configure(cursor="pencil" if enabled else "arrow")
 
     def event_point(self, event: tk.Event) -> Point:
+        transform = self._display_transform()
+        logical_x, logical_y = transform.to_logical(
+            (float(event.x), float(event.y))
+        )
         limit = self.settings.canvas_size - 1
         return (
-            float(max(0, min(limit, event.x))),
-            float(max(0, min(limit, event.y))),
+            float(max(0, min(limit, logical_x))),
+            float(max(0, min(limit, logical_y))),
         )
 
     def begin_stroke(self, event: tk.Event) -> None:
@@ -87,13 +111,16 @@ class PenDigitDrawingPad(ttk.Frame):
         if math.dist(previous, point) < self.settings.minimum_move:
             return
         self.current_stroke.append(point)
+        transform = self._display_transform()
+        display_previous = transform.to_display(previous)
+        display_point = transform.to_display(point)
         self.canvas.create_line(
-            previous[0],
-            previous[1],
-            point[0],
-            point[1],
+            display_previous[0],
+            display_previous[1],
+            display_point[0],
+            display_point[1],
             fill=self.STROKE_COLOR,
-            width=10,
+            width=max(4.0, 10.0 * transform.scale),
             capstyle=tk.ROUND,
             joinstyle=tk.ROUND,
             tags=("stroke",),
@@ -182,24 +209,30 @@ class PenDigitDrawingPad(ttk.Frame):
 
     def redraw(self) -> None:
         self.canvas.delete("all")
-        self._draw_grid()
+        transform = self._display_transform()
+        self._draw_grid(transform)
         for stroke in self.strokes:
-            coordinates = [coordinate for point in stroke for coordinate in point]
+            coordinates = [
+                coordinate
+                for point in stroke
+                for coordinate in transform.to_display(point)
+            ]
             if len(coordinates) >= 4:
                 self.canvas.create_line(
                     *coordinates,
                     fill=self.STROKE_COLOR,
-                    width=10,
+                    width=max(4.0, 10.0 * transform.scale),
                     capstyle=tk.ROUND,
                     joinstyle=tk.ROUND,
                     smooth=True,
                     tags=("stroke",),
                 )
-        radius = 8
-        for index, (x_coordinate, y_coordinate) in enumerate(
+        radius = max(5.0, min(12.0, 8.0 * transform.scale))
+        for index, logical_point in enumerate(
             self.sampled_points,
             start=1,
         ):
+            x_coordinate, y_coordinate = transform.to_display(logical_point)
             self.canvas.create_oval(
                 x_coordinate - radius,
                 y_coordinate - radius,
@@ -215,50 +248,81 @@ class PenDigitDrawingPad(ttk.Frame):
                 y_coordinate,
                 text=str(index),
                 fill="white",
-                font=("Segoe UI", 8, "bold"),
+                font=("Segoe UI", max(7, round(8 * transform.scale)), "bold"),
                 tags=("sample",),
             )
         if self.on_ready_changed is not None:
             self.on_ready_changed(self.is_ready)
 
-    def _draw_grid(self) -> None:
-        size = self.settings.canvas_size
-        step = size // 10
-        for coordinate in range(step, size, step):
+    def _draw_grid(self, transform: CanvasTransform) -> None:
+        logical_size = self.settings.canvas_size
+        display_size = logical_size * transform.scale
+        left = transform.offset_x
+        top = transform.offset_y
+        right = left + display_size
+        bottom = top + display_size
+        logical_step = logical_size // 10
+        for logical_coordinate in range(logical_step, logical_size, logical_step):
+            coordinate = logical_coordinate * transform.scale
             self.canvas.create_line(
-                coordinate,
-                0,
-                coordinate,
-                size,
+                left + coordinate,
+                top,
+                left + coordinate,
+                bottom,
                 fill=self.GRID_COLOR,
                 width=1,
                 tags=("grid",),
             )
             self.canvas.create_line(
-                0,
-                coordinate,
-                size,
-                coordinate,
+                left,
+                top + coordinate,
+                right,
+                top + coordinate,
                 fill=self.GRID_COLOR,
                 width=1,
                 tags=("grid",),
             )
-        center = size // 2
+        center_x = left + display_size / 2
+        center_y = top + display_size / 2
         self.canvas.create_line(
-            center,
-            0,
-            center,
-            size,
+            center_x,
+            top,
+            center_x,
+            bottom,
             fill="#D5E1EC",
             dash=(4, 4),
             tags=("grid",),
         )
         self.canvas.create_line(
-            0,
-            center,
-            size,
-            center,
+            left,
+            center_y,
+            right,
+            center_y,
             fill="#D5E1EC",
             dash=(4, 4),
             tags=("grid",),
         )
+        self.canvas.create_rectangle(
+            left,
+            top,
+            right,
+            bottom,
+            outline="#CCD8E5",
+            width=1,
+            tags=("grid",),
+        )
+
+    def _display_transform(self) -> CanvasTransform:
+        width = max(1, self.canvas.winfo_width())
+        height = max(1, self.canvas.winfo_height())
+        logical_size = float(self.settings.canvas_size)
+        scale = max(1.0e-6, min(width, height) / logical_size)
+        display_size = logical_size * scale
+        return CanvasTransform(
+            scale=scale,
+            offset_x=(width - display_size) / 2,
+            offset_y=(height - display_size) / 2,
+        )
+
+    def _on_canvas_resize(self, _event: tk.Event) -> None:
+        self.redraw()

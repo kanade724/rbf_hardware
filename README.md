@@ -41,6 +41,8 @@ python .\rbf-hardware\ui.py
 
 The GUI owns collection and inference in one process. Do not run the headless
 continuous inference entry against the same runtime CSV files at the same time.
+The drawing pad scales with the window while preserving its logical coordinates,
+so resizing does not change the generated 16-value sample.
 
 ```powershell
 .\venv\Scripts\Activate.ps1

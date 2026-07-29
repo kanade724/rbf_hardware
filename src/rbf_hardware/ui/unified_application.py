@@ -8,7 +8,6 @@ import os
 import queue
 import threading
 import tkinter as tk
-from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -60,7 +59,6 @@ class UnifiedPenDigitsApplication:
         self.status_detail = tk.StringVar(value="请稍候")
         self.predicted_digit = tk.StringVar(value="—")
         self.top_score = tk.StringVar(value="—")
-        self.score_margin = tk.StringVar(value="—")
         self.sample_index = tk.StringVar(value="—")
         self.experiment_file = tk.StringVar(value="尚未生成实验表")
         self.sample_count_text = tk.StringVar(value=str(self.saved_count))
@@ -225,7 +223,7 @@ class UnifiedPenDigitsApplication:
             canvas_host,
             on_ready_changed=self._on_drawing_ready,
         )
-        self.drawing_pad.pack(anchor="center")
+        self.drawing_pad.pack(fill="both", expand=True)
 
         instruction = tk.Label(
             parent,
@@ -264,7 +262,7 @@ class UnifiedPenDigitsApplication:
         result_header.pack(fill="x", padx=20, pady=(18, 10))
         tk.Label(
             result_header,
-            text="02  模拟硬件推理",
+            text="02  硬件推理",
             background=self.SURFACE,
             foreground=self.NAVY,
             font=("Microsoft YaHei UI", 14, "bold"),
@@ -303,7 +301,6 @@ class UnifiedPenDigitsApplication:
         metrics.pack(side="right", fill="y", padx=14, pady=14)
         self._metric_row(metrics, "样本序号", self.sample_index)
         self._metric_row(metrics, "最高得分", self.top_score)
-        self._metric_row(metrics, "决策间隔", self.score_margin)
 
         stage_section = tk.Frame(parent, background=self.SURFACE)
         stage_section.pack(fill="x", padx=20, pady=(18, 10))
@@ -372,18 +369,14 @@ class UnifiedPenDigitsApplication:
 
         self.history = ttk.Treeview(
             parent,
-            columns=("sample", "digit", "margin", "time"),
+            columns=("sample", "digit"),
             show="headings",
             height=3,
         )
         self.history.heading("sample", text="样本")
         self.history.heading("digit", text="结果")
-        self.history.heading("margin", text="决策间隔")
-        self.history.heading("time", text="时间")
-        self.history.column("sample", width=62, anchor="center")
-        self.history.column("digit", width=62, anchor="center")
-        self.history.column("margin", width=90, anchor="center")
-        self.history.column("time", width=105, anchor="center")
+        self.history.column("sample", width=150, anchor="center")
+        self.history.column("digit", width=150, anchor="center")
         self.history.pack(fill="both", expand=True, padx=20, pady=(0, 18))
 
     def _metric_row(self, parent: tk.Frame, label: str, variable: tk.StringVar) -> None:
@@ -593,16 +586,12 @@ class UnifiedPenDigitsApplication:
         self.predicted_digit.set(str(summary.predicted_digit))
         self.sample_index.set(str(summary.sample_index))
         self.top_score.set(f"{summary.top_score:.4f}")
-        self.score_margin.set(f"{summary.score_margin:.4f}")
-        current_time = datetime.now().strftime("%H:%M:%S")
         self.history.insert(
             "",
             0,
             values=(
                 summary.sample_index,
                 summary.predicted_digit,
-                f"{summary.score_margin:.4f}",
-                current_time,
             ),
         )
         children = self.history.get_children()
@@ -639,16 +628,12 @@ class UnifiedPenDigitsApplication:
             self.logger.warning("[GUI] 无法读取已有推理记录：%s", report_path)
             return
         for row in reversed(rows):
-            timestamp = row.get("timestamp_utc", "")
-            time_text = timestamp[11:19] if len(timestamp) >= 19 else "—"
             self.history.insert(
                 "",
                 "end",
                 values=(
                     row.get("sample_index", "—"),
                     row.get("predicted_digit", "—"),
-                    self._format_number(row.get("score_margin")),
-                    time_text,
                 ),
             )
         if rows:
@@ -656,7 +641,6 @@ class UnifiedPenDigitsApplication:
             self.predicted_digit.set(latest.get("predicted_digit", "—"))
             self.sample_index.set(latest.get("sample_index", "—"))
             self.top_score.set(self._format_number(latest.get("top_score")))
-            self.score_margin.set(self._format_number(latest.get("score_margin")))
 
     def open_experiment_directory(self) -> None:
         directory = self.pipeline.paths.experiment_output_dir

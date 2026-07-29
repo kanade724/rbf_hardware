@@ -22,7 +22,11 @@ from rbf_hardware.inference.pipeline import (
     StreamingInferencePipeline,
 )
 from rbf_hardware.inference.preprocessing import DifferentialLevelQuantizer
-from rbf_hardware.ui.pen_digits_collector import CollectorSettings, PenDigitDrawingPad
+from rbf_hardware.ui.pen_digits_collector import (
+    CanvasTransform,
+    CollectorSettings,
+    PenDigitDrawingPad,
+)
 
 
 class DifferentialLevelQuantizerTests(unittest.TestCase):
@@ -122,6 +126,22 @@ class NumericCsvStoreTests(unittest.TestCase):
 
 
 class PenDigitDrawingPadTests(unittest.TestCase):
+    def test_canvas_transform_round_trip_preserves_logical_coordinates(self) -> None:
+        transform = CanvasTransform(
+            scale=1.6,
+            offset_x=24.0,
+            offset_y=12.0,
+        )
+        logical_point = (125.0, 375.0)
+
+        display_point = transform.to_display(logical_point)
+
+        self.assertEqual(display_point, (224.0, 612.0))
+        np.testing.assert_allclose(
+            transform.to_logical(display_point),
+            logical_point,
+        )
+
     def test_normalized_features_preserve_pc_pen_digits_coordinate_rule(self) -> None:
         drawing_pad = object.__new__(PenDigitDrawingPad)
         drawing_pad.settings = CollectorSettings(point_count=8)

@@ -123,7 +123,7 @@ class PenDigitsCollectionApplication:
             card,
             on_ready_changed=self._on_drawing_ready,
         )
-        self.drawing_pad.pack(anchor="center", padx=20)
+        self.drawing_pad.pack(fill="both", expand=True, padx=20)
 
         tk.Label(
             card,
