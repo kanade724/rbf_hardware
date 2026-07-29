@@ -1,4 +1,4 @@
-"""Launch the Pen Digits drawing collector."""
+"""Launch the standalone Pen Digits data-collection GUI."""
 
 from __future__ import annotations
 
@@ -19,12 +19,16 @@ from rbf_hardware.configuration.settings import (
 )
 from rbf_hardware.data.csv_store import NumericCsvStore
 from rbf_hardware.infrastructure.logging import setup_logging
-from rbf_hardware.ui.pen_digits_collector import PenDigitsCollector
+from rbf_hardware.ui.collection_application import PenDigitsCollectionApplication
+from rbf_hardware.ui.windowing import enable_windows_high_dpi
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Collect append-only 16-value Pen Digits samples from mouse strokes."
+        description=(
+            "Open the standalone Pen Digits GUI and append 16-value drawing "
+            "samples without running inference."
+        )
     )
     parser.add_argument(
         "--config",
@@ -55,14 +59,23 @@ def main() -> None:
         level_name=str(config["logging"]["level"]),
         file_mode="a",
     )
-    logger.info("[采集] Pen Digits绘图采集器已启动，共享文件=%s", output_path)
+    logger.info(
+        "[采集] Pen Digits独立采集器已启动，共享文件=%s",
+        output_path,
+    )
     sample_store = NumericCsvStore(
         output_path,
         column_count=int(config["inference"]["input_features"]),
     )
+    enable_windows_high_dpi()
     root = tk.Tk()
-    PenDigitsCollector(root, sample_store, logger)
+    PenDigitsCollectionApplication(
+        root,
+        sample_store=sample_store,
+        logger=logger,
+    )
     root.mainloop()
+    logger.info("[采集] Pen Digits独立采集器已关闭")
 
 
 if __name__ == "__main__":

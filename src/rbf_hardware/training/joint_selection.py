@@ -94,6 +94,7 @@ def select_joint_gaussian_parameters(
     classifier_config: dict[str, Any],
     random_state: int,
     progress: Callable[[str], None] | None = None,
+    progress_update: Callable[[int, str], None] | None = None,
 ) -> JointGaussianSelectionResult:
     selection = feature_config["selection"]
     folds = int(selection["folds"])
@@ -173,6 +174,14 @@ def select_joint_gaussian_parameters(
                         fold_scores[key].append(
                             (evaluation.accuracy, evaluation.macro_f1, evaluation.recall)
                         )
+                        if progress_update is not None:
+                            progress_update(
+                                1,
+                                (
+                                    f"折 {fold_number}/{folds} · "
+                                    f"σ={float(sigma):g} · α={head_alpha:g}"
+                                ),
+                            )
 
     candidates: list[JointGaussianCandidateResult] = []
     for sigma, calibration, upper, head_alpha in keys:

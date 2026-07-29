@@ -35,10 +35,21 @@ REPORT_HEADER = (
 
 
 @dataclass(frozen=True)
+class PredictionSummary:
+    sample_index: int
+    predicted_digit: int
+    top_score: float
+    second_score: float
+    score_margin: float
+
+
+@dataclass(frozen=True)
 class PipelineProgress:
     normalized_rows: int = 0
     simulated_rows: int = 0
     predicted_rows: int = 0
+    predictions: tuple[PredictionSummary, ...] = ()
+    experiment_files: tuple[Path, ...] = ()
 
     @property
     def changed(self) -> bool:
@@ -194,6 +205,7 @@ class StreamingInferencePipeline:
 
         new_differential_rows = self.differential_store.read_rows(hardware_rows)
         simulated_count = 0
+        experiment_files: list[Path] = []
         if len(new_differential_rows):
             hardware_values = self.response_bank.simulate(
                 new_differential_rows,
@@ -208,6 +220,9 @@ class StreamingInferencePipeline:
                 experiments = self.experiment_recorder.record_batch(
                     new_differential_rows,
                     hardware_values,
+                )
+                experiment_files.extend(
+                    experiment.output_file for experiment in experiments
                 )
                 for offset, experiment in enumerate(experiments):
                     self.logger.info(
@@ -229,6 +244,7 @@ class StreamingInferencePipeline:
         output_start_index = min(prediction_rows, report_rows)
         new_hardware_rows = self.hardware_store.read_rows(output_start_index)
         predicted_count = 0
+        prediction_summaries: list[PredictionSummary] = []
         if len(new_hardware_rows):
             scores = self.predictor.scores(new_hardware_rows)
             class_indices = scores.argmax(axis=1)
@@ -243,15 +259,26 @@ class StreamingInferencePipeline:
             for offset, prediction in enumerate(predictions):
                 sample_index = first_sample_index + offset
                 predicted_digit = int(prediction)
+                top_score = float(top_scores[offset])
+                second_score = float(second_scores[offset])
                 prediction_records.append((sample_index, predicted_digit))
+                prediction_summaries.append(
+                    PredictionSummary(
+                        sample_index=sample_index,
+                        predicted_digit=predicted_digit,
+                        top_score=top_score,
+                        second_score=second_score,
+                        score_margin=top_score - second_score,
+                    )
+                )
                 report_records.append(
                     (
                         timestamp,
                         sample_index,
                         predicted_digit,
-                        float(top_scores[offset]),
-                        float(second_scores[offset]),
-                        float(top_scores[offset] - second_scores[offset]),
+                        top_score,
+                        second_score,
+                        top_score - second_score,
                         str(self.paths.raw_samples_file),
                         str(self.paths.differential_features_file),
                         str(self.paths.hardware_features_file),
@@ -279,6 +306,8 @@ class StreamingInferencePipeline:
             normalized_rows=normalized_count,
             simulated_rows=simulated_count,
             predicted_rows=predicted_count,
+            predictions=tuple(prediction_summaries),
+            experiment_files=tuple(experiment_files),
         )
 
     def run_forever(

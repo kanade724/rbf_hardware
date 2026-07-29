@@ -6,12 +6,13 @@
 
 ## 1. 项目当前实现
 
-项目只有以下 3 个正式 Python 入口：
+项目只有以下 4 个正式 Python 入口：
 
 | 入口 | 职责 |
 | --- | --- |
-| `collect_pen_digits.py` | 打开绘图界面，将每次保存的手写轨迹追加为一行 16 维原始数据 |
-| `run_hardware_inference.py` | 持续读取新行，完成差分量化、实测硬件响应模拟、实验表生成和数字识别 |
+| `ui.py` | 一键启动统一科研 GUI，在同一窗口完成绘图、保存、自动硬件推理和结果展示 |
+| `collect_pen_digits.py` | 单独启动手写数据采集器，只向原始 CSV 追加 16 维数据 |
+| `run_hardware_inference.py` | 无界面批处理入口，持续读取新行并完成完整推理，适用于自动化任务 |
 | `train_hardware_model.py` | 使用真实硬件训练集重新训练模型并生成训练报告 |
 
 `src/rbf_hardware/` 中的其他 Python 文件都是可复用模块，不应再增加 `main()`。
@@ -38,13 +39,14 @@
 │   ├── dataset/
 │   ├── src/
 │   ├── tests/
+│   ├── ui.py
 │   ├── collect_pen_digits.py
 │   ├── run_hardware_inference.py
 │   ├── train_hardware_model.py
 │   └── config.yaml
 ├── runtime/                         # 自动生成，不进入 Git
 ├── output/                          # 训练输出，不进入 Git
-├── app.log                          # 三个程序共用的运行日志
+├── app.log                          # 四个程序共用的运行日志
 ├── agent.log                        # Agent 工作记录
 └── venv/                            # 推荐的 Python 虚拟环境
 ```
@@ -87,19 +89,15 @@ cd C:\path\to\workspace
 .\venv\Scripts\Activate.ps1
 ```
 
-在终端 1 启动持续推理：
+启动统一科研 GUI：
 
 ```powershell
-python .\rbf-hardware\run_hardware_inference.py
+python .\rbf-hardware\ui.py
 ```
 
-在终端 2 启动绘图采集：
+不需要再单独启动 `run_hardware_inference.py`。统一 GUI 已经在同一进程中加载并自动侦测推理流水线。不要同时运行 GUI 和无界面持续推理入口，避免两个进程竞争同一组 CSV。
 
-```powershell
-python .\rbf-hardware\collect_pen_digits.py
-```
-
-在绘图窗口中写一个数字并保存。程序将：
+在手写板中写一个数字并点击“保存并识别”。程序将：
 
 1. 在 `runtime/pen_digits_raw.csv` 追加一行；
 2. 生成 16 维差分等级；
@@ -107,9 +105,10 @@ python .\rbf-hardware\collect_pen_digits.py
 4. 为这一次保存创建一张独立实验表；
 5. 使用 `checkpoints/weights.pt` 识别数字；
 6. 将预测结果和处理报告追加到对应 CSV；
-7. 将运行状态追加到 `app.log`。
+7. 在右侧展示数字、最高得分、决策间隔、实验表和最近记录；
+8. 将运行状态追加到 `app.log`。
 
-持续推理窗口按 `q` 或 `Ctrl+C` 可以退出。
+关闭 GUI 窗口即可结束采集和自动推理。
 
 实时查看日志：
 
@@ -123,16 +122,29 @@ Get-Content .\app.log -Encoding UTF8 -Tail 100 -Wait
 Get-Content .\agent.log -Encoding UTF8 -Tail 100 -Wait
 ```
 
-## 5. 绘图采集
+## 5. 统一科研 GUI
 
-绘图采集器会从鼠标轨迹中等距选择 8 个点，将每个点的 x、y 坐标组成 16 个数，并缩放到 0～100。
+统一 GUI 左侧是带网格和中心参考线的手写板。程序从鼠标轨迹中等距选择 8 个点，将每个点的 x、y 坐标组成 16 个数，并缩放到 0～100。
 
 常用操作：
 
 - 鼠标左键拖动画线；
-- 点击“保存”或按 `Enter`，保存当前数字；
+- 点击“保存并识别”或按 `Enter`，保存并立即执行完整推理；
 - 点击“清空”，清除当前画布；
 - 按 `Ctrl+Z`，撤销上一段轨迹。
+
+右侧科研面板展示：
+
+- 当前识别数字；
+- 样本序号；
+- 模型最高得分；
+- 第一名与第二名的决策间隔；
+- 采集、差分量化、16×16 硬件响应和模型识别四阶段状态；
+- 本地样本数和经验响应模式；
+- 本次生成的独立实验表文件名；
+- 最近识别记录。
+
+推理在后台线程运行，模型计算时界面不会冻结。GUI 也会自动侦测原始 CSV 的外部新增行并执行推理。
 
 默认输出：
 
@@ -143,9 +155,35 @@ Get-Content .\agent.log -Encoding UTF8 -Tail 100 -Wait
 指定其他输出文件：
 
 ```powershell
-python .\rbf-hardware\collect_pen_digits.py `
+python .\rbf-hardware\ui.py `
   --output C:\path\to\pen_digits_raw.csv
 ```
+
+临时使用确定性的均值响应模式：
+
+```powershell
+python .\rbf-hardware\ui.py --sampling-mode mean
+```
+
+正常实验应使用默认的 `empirical` 模式。
+
+### 5.1 分开启动采集和推理
+
+只需要采集原始手写数据、不加载模型时：
+
+```powershell
+python .\rbf-hardware\collect_pen_digits.py
+```
+
+只需要推理已有或后续新增的数据时：
+
+```powershell
+python .\rbf-hardware\run_hardware_inference.py
+```
+
+也可以分别打开两个终端，先启动无界面推理，再启动独立采集器。独立采集器只追加原始 CSV，推理程序会自动侦测新行。
+
+统一 `ui.py` 已经包含推理功能，因此运行 `ui.py` 时不要再对同一组 CSV 启动 `run_hardware_inference.py`。
 
 ## 6. 完整数据处理流程
 
@@ -334,6 +372,8 @@ python .\rbf-hardware\run_hardware_inference.py `
 
 ## 10. 推理命令
 
+本节命令用于无界面批处理、服务器运行或自动化验证。日常手写实验优先使用统一 GUI。无界面持续推理程序与 GUI 不应同时处理同一组运行时文件。
+
 持续监听新行：
 
 ```powershell
@@ -381,6 +421,13 @@ python .\rbf-hardware\run_hardware_inference.py --help
 python .\rbf-hardware\train_hardware_model.py
 ```
 
+训练终端会显示两个 `tqdm` 进度条：
+
+- `联合参数搜索`：按照交叉验证折数和每个真实参数组合持续更新；
+- `最终模型训练`：展示联合特征变换、硬件分类器、PC 基准以及权重与报告保存 4 个阶段。
+
+进度条显示当前折、联合高斯 `sigma` 和分类头 `alpha`。训练日志仍然同时追加到 `app.log`，进度条不会改变模型选择结果。
+
 训练结果默认写入：
 
 ```text
@@ -426,7 +473,7 @@ python -m unittest discover -s .\rbf-hardware\tests -v
 
 - 测试：15 项全部通过；
 - Python 文件：36 个可以解析；
-- 正式 `main()`：仅 3 个；
+- 正式 `main()`：仅 4 个；
 - checkpoint 在真实 `test_out_400.csv` 上准确率约 93.62%；
 - 经验均值模拟准确率约 93.85%，与真实硬件预测一致率约 99.32%；
 - 加噪经验模拟的 10 个随机种子平均准确率约 93.53%；
@@ -443,10 +490,10 @@ python -m unittest discover -s .\rbf-hardware\tests -v
 处理方法：
 
 1. 关闭正在查看的 CSV；
-2. 保持持续推理程序运行，它会记录警告并自动重试；
+2. 保持 GUI 或无界面持续推理程序运行，它会记录警告并自动重试；
 3. 如果使用 `--once`，关闭占用程序后重新执行命令。
 
-不要在持续推理时直接用 WPS 或 Excel 打开：
+不要在 GUI 或持续推理运行时直接用 WPS 或 Excel 打开：
 
 ```text
 pen_digits_raw.csv
@@ -518,7 +565,7 @@ EF BB BF
 
 ### 15.1 `app.log`
 
-三个正式程序共用 `工作区/app.log`，记录：
+四个正式程序共用 `工作区/app.log`，记录：
 
 - 程序启动和停止；
 - 共享文件路径；
@@ -570,7 +617,7 @@ Agent 在 `工作区/agent.log` 中用中文记录：
 
 必须保持以下不变量：
 
-- 正式 `main()` 始终只有采集、推理、训练 3 个；
+- 正式 `main()` 始终只有统一 GUI、采集、推理、训练 4 个；
 - 可复用代码放在 `src/rbf_hardware/` 的对应子包中；
 - 单一模块应职责明确，入口文件只做参数解析和组装；
 - 运行时文件继续位于仓库外的 `runtime/`；
@@ -610,7 +657,7 @@ src/rbf_hardware/
 ├── modeling/           # 联合高斯变换、Ridge 分类器、checkpoint 推理
 ├── reporting/          # 指标和报告
 ├── training/           # 训练、交叉验证和参数选择
-├── ui/                 # Pen Digits 绘图采集器
+├── ui/                 # 统一GUI、独立采集应用、手写板和窗口工具
 └── utilities/          # 无 main 的一次性迁移和格式转换工具
 ```
 
@@ -639,6 +686,8 @@ src/rbf_hardware/
 
 当前版本已经实现：
 
+- 采集、自动推理和结果展示一体化的科研风格 GUI；
+- 后台推理线程、自动新行侦测和最近识别记录；
 - 16 维绘图数据追加采集；
 - 与训练参考输入一致的归一化和 256 等级差分量化；
 - 基于 400 Cycle 实测响应的 16×16 硬件模拟；
@@ -648,7 +697,7 @@ src/rbf_hardware/
 - Windows 文件占用重试；
 - 仓库外运行目录；
 - 中文 UTF-8 日志；
-- 采集、推理、训练三个正式入口；
+- 统一 GUI、采集、推理、训练四个正式入口；
 - 自动化测试和工程回归检查。
 
 如需理解某一阶段的实现，请先从 `src/rbf_hardware/inference/pipeline.py` 查看流水线编排，再进入对应模块，不要从运行时 CSV 的偶然内容反推接口规则。

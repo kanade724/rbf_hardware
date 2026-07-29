@@ -4,10 +4,12 @@ For installation, operation, troubleshooting, data contracts, and agent handoff,
 use the primary Chinese guide: [README_cn.md](README_cn.md). It is stored as
 UTF-8 with BOM for reliable display in Windows PowerShell, WPS, and common editors.
 
-The project has exactly three Python `main()` entry points:
+The project has exactly four Python `main()` entry points:
 
 - `train_hardware_model.py` trains the 16×16 hardware Gaussian model.
-- `collect_pen_digits.py` appends 16-value mouse-drawn samples.
+- `ui.py` opens the unified scientific GUI for drawing, automatic hardware
+  inference, and result presentation.
+- `collect_pen_digits.py` runs collection only and appends 16-value samples.
 - `run_hardware_inference.py` continuously processes new rows and predicts digits.
 
 The inference process is a restart-safe, append-only pipeline:
@@ -30,7 +32,15 @@ Runtime CSV files are stored outside this repository in `SURF/runtime/`. Every s
 
 ## Run
 
-From the `SURF` directory on Windows:
+From the `SURF` directory on Windows, launch the unified GUI:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+python .\rbf-hardware\ui.py
+```
+
+The GUI owns collection and inference in one process. Do not run the headless
+continuous inference entry against the same runtime CSV files at the same time.
 
 ```powershell
 .\venv\Scripts\Activate.ps1
@@ -44,6 +54,9 @@ Process currently available rows once:
 ```powershell
 python .\rbf-hardware\run_hardware_inference.py --once
 ```
+
+Training displays `tqdm` progress for every completed cross-validation
+parameter tuple and for the four final model-building stages.
 
 Use `--sampling-mode mean` for deterministic verification. The default `empirical` mode draws one of 400 measured physical cycles per saved digit and uses that same cycle for all 16 dimensions. After exact level-and-Group lookup, independent multiplicative jitter is applied: up to ±5% for small responses, decreasing linearly to ±1% at each Group's measured 95th-percentile magnitude. This avoids copying source values while preserving signs, tails, channel correlation, and cycle drift without a Gaussian assumption.
 
