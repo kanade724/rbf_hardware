@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from ..data.csv_store import NumericCsvStore
+from ..data.csv_store import CsvRowError, NumericCsvStore
 from ..inference.pipeline import (
     PipelineProgress,
     PredictionSummary,
@@ -976,6 +976,7 @@ class UnifiedPenDigitsApplication:
             self.sample_store.path,
         )
         self.drawing_pad.clear()
+        self._run_simulation_stage_silently()
         self.last_raw_signature = self._file_signature(self.sample_store.path)
         self.workflow_state = ExperimentWorkflowState.PENDING
         self.pipeline_state.set("SAMPLE SAVED")
@@ -983,6 +984,29 @@ class UnifiedPenDigitsApplication:
         self.status_detail.set("Click Experiment 2 to run hardware inference")
         self._set_stage_state(1)
         self.inference_button.configure(state="normal")
+
+    def _run_simulation_stage_silently(self) -> None:
+        """Quantize and simulate the saved digit without showing a result.
+
+        This keeps ``pen_digits_hardware_experiment.csv`` current the moment
+        Experiment 1 saves a digit. The recognition result itself is only
+        computed and shown once Experiment 2 runs.
+        """
+        try:
+            self.pipeline.process_simulation_stage()
+        except PermissionError:
+            self.logger.warning(
+                "[实验一] 差分/硬件/实验表CSV被占用，硬件模拟将在实验二时自动重试",
+            )
+        except CsvRowError as error:
+            self.logger.warning(
+                "[实验一] 硬件模拟阶段暂时存在未完成行，将在实验二时自动重试：%s",
+                error,
+            )
+        except Exception:
+            self.logger.exception(
+                "[实验一] 硬件模拟阶段失败，将在实验二时自动重试",
+            )
 
     def _request_inference(self) -> None:
         if self.inference_busy or self.close_requested:

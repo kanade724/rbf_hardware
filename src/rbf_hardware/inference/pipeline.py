@@ -94,6 +94,7 @@ class StreamingInferencePipeline:
         )
         self.prediction_store = CsvRecordStore(paths.predictions_file, PREDICTION_HEADER)
         self.report_store = CsvRecordStore(paths.report_file, REPORT_HEADER)
+        self.labeled_store = NumericCsvStore(paths.labeled_dataset_file, input_features + 1)
 
         checkpoint_features = int(predictor.metadata.get("hardware_input_features", -1))
         expected_hardware_features = input_features * basis_per_dimension
@@ -162,12 +163,13 @@ class StreamingInferencePipeline:
             ),
         )
 
-    def _validate_stage_counts(self) -> tuple[int, int, int, int, int]:
+    def _validate_stage_counts(self) -> tuple[int, int, int, int, int, int]:
         raw_rows = self.raw_store.row_count()
         differential_rows = self.differential_store.row_count()
         hardware_rows = self.hardware_store.row_count()
         prediction_rows = self.prediction_store.row_count()
         report_rows = self.report_store.row_count()
+        labeled_rows = self.labeled_store.row_count()
         if differential_rows > raw_rows:
             raise ValueError(
                 "Differential CSV contains more rows than the raw sample CSV; "
@@ -178,33 +180,65 @@ class StreamingInferencePipeline:
                 "Hardware CSV contains more rows than the differential CSV; "
                 "remove or repair the inconsistent downstream rows."
             )
-        if prediction_rows > hardware_rows or report_rows > hardware_rows:
+        if (
+            prediction_rows > hardware_rows
+            or report_rows > hardware_rows
+            or labeled_rows > hardware_rows
+        ):
             raise ValueError(
-                "Prediction or report CSV contains more rows than the hardware CSV."
+                "Prediction, report, or labeled-dataset CSV contains more rows "
+                "than the hardware CSV."
             )
-        return raw_rows, differential_rows, hardware_rows, prediction_rows, report_rows
-
-    def has_pending_work(self) -> bool:
-        """Return whether any pipeline stage trails its upstream source."""
-
-        (
+        return (
             raw_rows,
             differential_rows,
             hardware_rows,
             prediction_rows,
             report_rows,
-        ) = self._validate_stage_counts()
-        return bool(
-            differential_rows < raw_rows
-            or hardware_rows < differential_rows
-            or prediction_rows < hardware_rows
-            or report_rows < hardware_rows
+            labeled_rows,
         )
 
-    def process_once(self) -> PipelineProgress:
-        raw_rows, differential_rows, hardware_rows, prediction_rows, report_rows = (
-            self._validate_stage_counts()
+    def has_pending_simulation_work(self) -> bool:
+        """Return whether any raw rows still need quantizing/simulating.
+
+        This covers the stages behind ``pen_digits_hardware_experiment.csv``
+        (normalize, quantize, simulate) but not classification.
+        """
+
+        raw_rows, differential_rows, hardware_rows, *_ = self._validate_stage_counts()
+        return bool(differential_rows < raw_rows or hardware_rows < differential_rows)
+
+    def has_pending_prediction_work(self) -> bool:
+        """Return whether any simulated hardware rows still need classifying."""
+
+        (
+            _raw_rows,
+            _differential_rows,
+            hardware_rows,
+            prediction_rows,
+            report_rows,
+            labeled_rows,
+        ) = self._validate_stage_counts()
+        return bool(
+            prediction_rows < hardware_rows
+            or report_rows < hardware_rows
+            or labeled_rows < hardware_rows
         )
+
+    def has_pending_work(self) -> bool:
+        """Return whether any pipeline stage trails its upstream source."""
+
+        return self.has_pending_simulation_work() or self.has_pending_prediction_work()
+
+    def process_simulation_stage(self) -> PipelineProgress:
+        """Normalize newly saved raw rows and simulate hardware responses.
+
+        Updates the fixed hardware-experiment aggregate table
+        (``pen_digits_hardware_experiment.csv``) but does not classify or
+        write any prediction/report/labeled-dataset rows.
+        """
+
+        raw_rows, differential_rows, hardware_rows, *_ = self._validate_stage_counts()
 
         new_raw_rows = self.raw_store.read_rows(differential_rows)
         normalized_count = 0
@@ -257,11 +291,30 @@ class StreamingInferencePipeline:
                 self.sampling_mode,
             )
 
-        output_start_index = min(prediction_rows, report_rows)
+        return PipelineProgress(
+            normalized_rows=normalized_count,
+            simulated_rows=simulated_count,
+            experiment_files=tuple(experiment_files),
+        )
+
+    def process_prediction_stage(self) -> PipelineProgress:
+        """Classify any simulated hardware rows that are not yet predicted."""
+
+        (
+            _raw_rows,
+            _differential_rows,
+            hardware_rows,
+            prediction_rows,
+            report_rows,
+            labeled_rows,
+        ) = self._validate_stage_counts()
+
+        output_start_index = min(prediction_rows, report_rows, labeled_rows)
         new_hardware_rows = self.hardware_store.read_rows(output_start_index)
         predicted_count = 0
         prediction_summaries: list[PredictionSummary] = []
         if len(new_hardware_rows):
+            raw_features_for_output = self.raw_store.read_rows(output_start_index)
             scores = self.predictor.scores(new_hardware_rows)
             class_indices = scores.argmax(axis=1)
             predictions = self.predictor.classes[class_indices]
@@ -272,6 +325,7 @@ class StreamingInferencePipeline:
             first_sample_index = output_start_index + 1
             prediction_records = []
             report_records = []
+            labeled_rows_batch = []
             for offset, prediction in enumerate(predictions):
                 sample_index = first_sample_index + offset
                 predicted_digit = int(prediction)
@@ -301,13 +355,21 @@ class StreamingInferencePipeline:
                         str(self.paths.checkpoint_file),
                     )
                 )
+                labeled_rows_batch.append(
+                    [*raw_features_for_output[offset].tolist(), float(predicted_digit)]
+                )
             prediction_offset = prediction_rows - output_start_index
             report_offset = report_rows - output_start_index
+            labeled_offset = labeled_rows - output_start_index
             self.prediction_store.append_records(prediction_records[prediction_offset:])
             self.report_store.append_records(report_records[report_offset:])
+            pending_labeled_rows = labeled_rows_batch[labeled_offset:]
+            if pending_labeled_rows:
+                self.labeled_store.append_rows(pending_labeled_rows)
             predicted_count = max(
                 len(prediction_records) - prediction_offset,
                 len(report_records) - report_offset,
+                len(labeled_rows_batch) - labeled_offset,
             )
             final_output_row = output_start_index + len(prediction_records)
             self.logger.info(
@@ -317,13 +379,29 @@ class StreamingInferencePipeline:
                 [int(value) for value in predictions],
                 self.paths.report_file,
             )
+            self.logger.info(
+                "[数据集] 已保存原始数据与识别标签，行=%d..%d，文件=%s",
+                first_sample_index,
+                final_output_row,
+                self.paths.labeled_dataset_file,
+            )
 
         return PipelineProgress(
-            normalized_rows=normalized_count,
-            simulated_rows=simulated_count,
             predicted_rows=predicted_count,
             predictions=tuple(prediction_summaries),
-            experiment_files=tuple(experiment_files),
+        )
+
+    def process_once(self) -> PipelineProgress:
+        """Run the simulation stage followed by the prediction stage."""
+
+        simulation_progress = self.process_simulation_stage()
+        prediction_progress = self.process_prediction_stage()
+        return PipelineProgress(
+            normalized_rows=simulation_progress.normalized_rows,
+            simulated_rows=simulation_progress.simulated_rows,
+            predicted_rows=prediction_progress.predicted_rows,
+            predictions=prediction_progress.predictions,
+            experiment_files=simulation_progress.experiment_files,
         )
 
     def run_forever(

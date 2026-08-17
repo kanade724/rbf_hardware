@@ -191,6 +191,7 @@ class UnifiedPenDigitsApplicationTests(unittest.TestCase):
             application.saved_count = 0
             application.sample_count_text = Mock()
             application.logger = Mock()
+            application.pipeline = Mock()
             application.pipeline_state = Mock()
             application.status_text = Mock()
             application.status_detail = Mock()
@@ -203,9 +204,49 @@ class UnifiedPenDigitsApplicationTests(unittest.TestCase):
 
             self.assertEqual(application.sample_store.row_count(), 1)
             application.drawing_pad.clear.assert_called_once_with()
+            application.pipeline.process_simulation_stage.assert_called_once_with()
             application._request_inference.assert_not_called()
             application.pipeline_state.set.assert_called_once_with("SAMPLE SAVED")
             application._set_stage_state.assert_called_once_with(1)
+
+    def test_experiment_one_tolerates_simulation_stage_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            application = object.__new__(UnifiedPenDigitsApplication)
+            application.inference_busy = False
+            application.drawing_pad = Mock()
+            application.drawing_pad.is_ready = True
+            application.drawing_pad.normalized_features.return_value = np.arange(
+                16,
+                dtype=np.float32,
+            )
+            application.sample_store = NumericCsvStore(
+                Path(temporary_directory) / "raw.csv",
+                16,
+            )
+            application.saved_count = 0
+            application.sample_count_text = Mock()
+            application.logger = Mock()
+            application.pipeline = Mock()
+            application.pipeline.process_simulation_stage.side_effect = PermissionError(
+                13,
+                "Permission denied",
+                "pen_digits_hardware.csv",
+            )
+            application.pipeline_state = Mock()
+            application.status_text = Mock()
+            application.status_detail = Mock()
+            application.inference_button = Mock()
+            application._set_stage_state = Mock()
+            application._request_inference = Mock()
+            application.last_raw_signature = None
+
+            application.save_sample()
+
+            self.assertEqual(application.sample_store.row_count(), 1)
+            application.pipeline_state.set.assert_called_once_with("SAMPLE SAVED")
+            application.inference_button.configure.assert_called_once_with(
+                state="normal",
+            )
 
     def test_external_sample_detection_waits_for_experiment_two(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -525,11 +566,13 @@ class StreamingInferencePipelineTests(unittest.TestCase):
         pipeline.hardware_store = Mock()
         pipeline.prediction_store = Mock()
         pipeline.report_store = Mock()
+        pipeline.labeled_store = Mock()
         trailing_stage_counts = (
-            (2, 1, 1, 1, 1),
-            (2, 2, 1, 1, 1),
-            (2, 2, 2, 1, 2),
-            (2, 2, 2, 2, 1),
+            (2, 1, 1, 1, 1, 1),
+            (2, 2, 1, 1, 1, 1),
+            (2, 2, 2, 1, 2, 2),
+            (2, 2, 2, 2, 1, 2),
+            (2, 2, 2, 2, 2, 1),
         )
         for stage_counts in trailing_stage_counts:
             with self.subTest(stage_counts=stage_counts):
@@ -539,6 +582,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                     pipeline.hardware_store,
                     pipeline.prediction_store,
                     pipeline.report_store,
+                    pipeline.labeled_store,
                 )
                 for store, row_count in zip(
                     stores,
@@ -553,6 +597,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
         pipeline.hardware_store.row_count.return_value = 2
         pipeline.prediction_store.row_count.return_value = 2
         pipeline.report_store.row_count.return_value = 2
+        pipeline.labeled_store.row_count.return_value = 2
 
         self.assertFalse(pipeline.has_pending_work())
 
@@ -587,6 +632,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 experiment_output_dir=root / "experiments",
                 predictions_file=root / "predictions.csv",
                 report_file=root / "report.csv",
+                labeled_dataset_file=root / "labeled.csv",
                 differential_levels_file=root / "levels.csv",
                 empirical_response_file=root / "response_bank.npz",
                 checkpoint_file=root / "weights.pt",
@@ -652,6 +698,95 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 np.asarray(experiment_rows[1:], dtype=np.float64),
                 np.asarray([[1.0, 0.25, 0.75]]),
             )
+            np.testing.assert_array_equal(
+                NumericCsvStore(paths.labeled_dataset_file, 2).read_rows(),
+                np.asarray([[100.0, 1.0]], dtype=np.float32),
+            )
+
+    def test_simulation_stage_updates_experiment_table_without_predicting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            paths = InferencePaths(
+                project_root=root,
+                workspace_root=root,
+                raw_samples_file=root / "raw.csv",
+                differential_features_file=root / "differential.csv",
+                hardware_features_file=root / "hardware.csv",
+                experiment_output_dir=root / "experiments",
+                predictions_file=root / "predictions.csv",
+                report_file=root / "report.csv",
+                labeled_dataset_file=root / "labeled.csv",
+                differential_levels_file=root / "levels.csv",
+                empirical_response_file=root / "response_bank.npz",
+                checkpoint_file=root / "weights.pt",
+                log_file=root / "app.log",
+            )
+            levels = np.asarray((0.0, 1.0), dtype=np.float64)
+            quantizer = DifferentialLevelQuantizer(
+                levels=levels,
+                input_features=1,
+                raw_minimum=0.0,
+                raw_maximum=100.0,
+            )
+            response_bank = EmpiricalHardwareResponseBank(
+                levels=levels,
+                response_samples=np.asarray(
+                    [
+                        [[0.0, 0.0], [0.0, 0.0]],
+                        [[0.25, 0.75], [0.25, 0.75]],
+                    ]
+                ),
+                group_magnitude_references=np.asarray((1.0, 1.0)),
+            )
+            predictor = _CapturingPredictor()
+            experiment_recorder = HardwareExperimentRecorder(
+                root / "experiments",
+                input_features=1,
+                basis_per_dimension=2,
+                differential_levels=levels,
+            )
+            NumericCsvStore(paths.raw_samples_file, 1).append_rows([[100.0]])
+            pipeline = StreamingInferencePipeline(
+                paths=paths,
+                input_features=1,
+                basis_per_dimension=2,
+                quantizer=quantizer,
+                response_bank=response_bank,
+                predictor=predictor,
+                sampling_mode="mean",
+                random_seed=42,
+                logger=logging.getLogger("test_hardware_data_flow"),
+                experiment_recorder=experiment_recorder,
+            )
+
+            simulation_progress = pipeline.process_simulation_stage()
+
+            self.assertEqual(simulation_progress.normalized_rows, 1)
+            self.assertEqual(simulation_progress.simulated_rows, 1)
+            self.assertEqual(simulation_progress.predicted_rows, 0)
+            self.assertEqual(len(simulation_progress.predictions), 0)
+            self.assertEqual(len(simulation_progress.experiment_files), 1)
+            experiment_files = list((root / "experiments").glob("*.csv"))
+            self.assertEqual(len(experiment_files), 1)
+            self.assertIsNone(predictor.received_features)
+            self.assertEqual(
+                CsvRecordStore(paths.predictions_file, PREDICTION_HEADER).row_count(), 0
+            )
+            self.assertTrue(pipeline.has_pending_prediction_work())
+            self.assertFalse(pipeline.has_pending_simulation_work())
+
+            prediction_progress = pipeline.process_prediction_stage()
+
+            self.assertEqual(prediction_progress.normalized_rows, 0)
+            self.assertEqual(prediction_progress.simulated_rows, 0)
+            self.assertEqual(prediction_progress.predicted_rows, 1)
+            self.assertEqual(len(prediction_progress.predictions), 1)
+            self.assertEqual(prediction_progress.predictions[0].predicted_digit, 1)
+            np.testing.assert_array_equal(
+                predictor.received_features,
+                np.asarray([[0.25, 0.75]], dtype=np.float32),
+            )
+            self.assertFalse(pipeline.has_pending_work())
 
     def test_recovers_when_prediction_was_written_before_report(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -665,6 +800,7 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 experiment_output_dir=root / "experiments",
                 predictions_file=root / "predictions.csv",
                 report_file=root / "report.csv",
+                labeled_dataset_file=root / "labeled.csv",
                 differential_levels_file=root / "levels.csv",
                 empirical_response_file=root / "response_bank.npz",
                 checkpoint_file=root / "weights.pt",
@@ -707,6 +843,10 @@ class StreamingInferencePipelineTests(unittest.TestCase):
                 CsvRecordStore(paths.predictions_file, PREDICTION_HEADER).row_count(), 1
             )
             self.assertEqual(CsvRecordStore(paths.report_file, REPORT_HEADER).row_count(), 1)
+            np.testing.assert_array_equal(
+                NumericCsvStore(paths.labeled_dataset_file, 2).read_rows(),
+                np.asarray([[100.0, 1.0]], dtype=np.float32),
+            )
 
 
 if __name__ == "__main__":

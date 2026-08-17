@@ -34,6 +34,7 @@ class InferencePaths:
     experiment_output_dir: Path
     predictions_file: Path
     report_file: Path
+    labeled_dataset_file: Path
     differential_levels_file: Path
     empirical_response_file: Path
     checkpoint_file: Path
@@ -269,6 +270,7 @@ def _validate_config(config: dict[str, Any]) -> None:
         "experiment_output_dir",
         "predictions_file",
         "report_file",
+        "labeled_dataset_file",
         "differential_levels_file",
         "empirical_response_file",
         "checkpoint_file",
@@ -349,6 +351,7 @@ def resolve_inference_paths(config: dict[str, Any]) -> InferencePaths:
         experiment_output_dir=resolve_value(str(inference["experiment_output_dir"])),
         predictions_file=resolve_value(str(inference["predictions_file"])),
         report_file=resolve_value(str(inference["report_file"])),
+        labeled_dataset_file=resolve_value(str(inference["labeled_dataset_file"])),
         differential_levels_file=resolve_value(str(inference["differential_levels_file"])),
         empirical_response_file=resolve_value(str(inference["empirical_response_file"])),
         checkpoint_file=resolve_value(str(inference["checkpoint_file"])),

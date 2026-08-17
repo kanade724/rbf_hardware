@@ -366,6 +366,7 @@ python .\rbf-hardware\run_hardware_inference.py `
 | `hardware_experiments/pen_digits_hardware_experiment.csv` | 17 | 当前最新数字的固定覆盖聚合实验表 |
 | `pen_digits_predictions.csv` | 由报告模块定义 | 样本序号和预测数字 |
 | `pen_digits_inference_report.csv` | 由报告模块定义 | 时间、分数、分类边界及数据来源 |
+| `pen_digits_labeled.csv` | 17 | 每行的原始16维手写坐标 + 该行的识别标签，无表头，可直接作为标注数据集使用 |
 
 `pen_digits_hardware.csv` 是 checkpoint 的直接输入。模型不会绕过硬件模拟层直接使用 16 维原始输入。
 
@@ -500,6 +501,7 @@ pen_digits_differential.csv
 pen_digits_hardware.csv
 pen_digits_predictions.csv
 pen_digits_inference_report.csv
+pen_digits_labeled.csv
 ```
 
 需要观察内容时，优先复制文件后查看，或使用：

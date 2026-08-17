@@ -48,6 +48,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--experiment-output-dir", type=Path, default=None)
     parser.add_argument("--predictions-output", type=Path, default=None)
     parser.add_argument("--report-output", type=Path, default=None)
+    parser.add_argument("--labeled-output", type=Path, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--response-bank", type=Path, default=None)
     return parser.parse_args()
@@ -88,6 +89,9 @@ def main() -> None:
             arguments.predictions_output, configured_paths.predictions_file
         ),
         report_file=resolved_override(arguments.report_output, configured_paths.report_file),
+        labeled_dataset_file=resolved_override(
+            arguments.labeled_output, configured_paths.labeled_dataset_file
+        ),
         checkpoint_file=resolved_override(arguments.checkpoint, configured_paths.checkpoint_file),
         empirical_response_file=resolved_override(
             arguments.response_bank, configured_paths.empirical_response_file
@@ -107,6 +111,7 @@ def main() -> None:
         paths.experiment_output_dir / "pen_digits_hardware_experiment.csv",
     )
     logger.info("[同步] 推理报告文件：%s", paths.report_file)
+    logger.info("[数据集] 原始数据+识别标签文件：%s", paths.labeled_dataset_file)
     logger.info("[推理] checkpoint：%s", paths.checkpoint_file)
     logger.info("[推理] 400循环实测硬件响应库：%s", paths.empirical_response_file)
     logger.info(

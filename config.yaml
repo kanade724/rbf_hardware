@@ -107,6 +107,7 @@ inference:
   experiment_output_dir: runtime/hardware_experiments
   predictions_file: runtime/pen_digits_predictions.csv
   report_file: runtime/pen_digits_inference_report.csv
+  labeled_dataset_file: runtime/pen_digits_labeled.csv
   differential_levels_file: rbf-hardware/dataset/csv/differential_levels.csv
   empirical_response_file: rbf-hardware/dataset/empirical/hardware_response_samples.npz
   checkpoint_file: rbf-hardware/checkpoints/weights.pt
